@@ -58,13 +58,9 @@ html,body,[class*="css"],[data-testid="stAppViewContainer"]{font-family:'Plus Ja
 .uline{height:6px;width:260px;border-radius:6px;background:linear-gradient(90deg,#f2b01e,rgba(242,176,30,.1));margin:.1rem 0 1rem;}
 .sub{color:#1b4d3a;font-size:1.05rem;line-height:1.55;max-width:430px;margin:0;}
 .st-key-hero .stButton{margin-top:.4rem;}
-.st-key-hero button{background:#1b4d3a;color:#fff;border:0;border-radius:50px;padding:.7rem 1.1rem .7rem 2rem;font-size:1.1rem;
-  font-weight:700;box-shadow:0 8px 18px rgba(27,77,58,.28);}
-.st-key-hero button:after{content:"→";display:inline-flex;align-items:center;justify-content:center;width:2.5rem;height:2.5rem;
-  border-radius:50%;background:#f6c744;color:#1b4d3a;margin-left:2rem;font-size:1.3rem;}
-.st-key-hero button:hover{background:#133a2b;color:#fff;}
-.feat{display:flex;gap:1.4rem;margin-top:1rem;color:#1b4d3a;font-weight:600;font-size:.88rem;line-height:1.2;}
-.feat div{display:flex;gap:.6rem;align-items:center;} .feat i{font-style:normal;background:#f1ecdc;border-radius:12px;padding:.55rem .65rem;font-size:1.2rem;}
+.st-key-hero button{background:#1b4d3a;border:0;border-radius:50px;padding:.75rem 2.6rem;box-shadow:0 8px 18px rgba(27,77,58,.28);}
+.st-key-hero button p{color:#fff;font-size:1.1rem;font-weight:700;}
+.st-key-hero button:hover{background:#133a2b;}
 /* seksi & kartu */
 .sec{display:flex;gap:.8rem;align-items:baseline;margin:1.6rem 0 .5rem;}
 .sec b{font-family:'Playfair Display',serif;font-size:1.65rem;font-weight:800;color:#1b4d3a;} .sec span{color:#7b8a80;font-size:.9rem;}
@@ -135,7 +131,6 @@ except Exception as exc:
 CF, TFIDF, RATINGS, BOOKS, META = D["cf"], D["tfidf"], D["ratings"], D["books"], D["meta"]
 ss = st.session_state
 ss.setdefault("page", "Home")
-ss.setdefault("fav", [])
 ss.setdefault("author", None)
 uids = sorted(RATINGS["User-ID"].dropna().astype(int).unique().tolist())
 ss.setdefault("user", int(RATINGS.groupby("User-ID").size().idxmax()))
@@ -191,10 +186,6 @@ def cover(url, title=""):
     return f'<div class="cover ph">{html.escape(str(title)[:40])}</div>'
 
 
-def toggle_fav(i):
-    ss.fav.remove(i) if i in ss.fav else ss.fav.append(i)
-
-
 def go_page(p):
     ss.page = p
 
@@ -221,8 +212,6 @@ def detail(isbn):
     b.write(f"**{info.get('Book-Author', '')}**  \n{info.get('Publisher', '')} · {info.get('Year-Of-Publication', '')}")
     if s is not None:
         b.write(f"⭐ {s['avg']:.1f} dari {int(s['n'])} rating")
-    b.button("♥ Hapus dari favorit" if isbn in ss.fav else "♡ Simpan ke favorit", key=f"dfav{isbn}",
-             on_click=toggle_fav, args=(isbn,))
     st.markdown("**Buku mirip**")
     for _, r in similar(isbn).iterrows():
         st.markdown(mini(r), unsafe_allow_html=True)
@@ -238,8 +227,6 @@ def grid(df, key, ncols=5, score=None):
                 st.markdown(f'<div class="bk">{cover(row.get("Image-URL-M"), t)}<div class="bt">{html.escape(t[:46])}</div>'
                             f'<div class="ba">{html.escape(str(row.get("Book-Author", ""))[:28])}</div>{sub}</div>',
                             unsafe_allow_html=True)
-                st.button("♥ Tersimpan" if isbn in ss.fav else "♡ Simpan", key=f"{key}f{i}{isbn}",
-                          on_click=toggle_fav, args=(isbn,), use_container_width=True)
                 if st.button("Detail", key=f"{key}d{i}{isbn}", use_container_width=True):
                     detail(isbn)
 
@@ -288,11 +275,11 @@ def hbar(df, x, y, fmt="%{x:,}"):
 # Sidebar
 # =========================================================
 PAGES = [("Home", "🏠"), ("Rekomendasi", "✨"), ("Segmentasi Pengguna", "👥"),
-         ("Eksplorasi Data", "📊"), ("Favorit", "♥"), ("Evaluasi Model", "🎯")]
+         ("Eksplorasi Data", "📊"), ("Evaluasi Model", "🎯")]
 with st.sidebar:
     st.markdown('<div class="logo">Book Recommender<small>DASHBOARD</small></div>', unsafe_allow_html=True)
     for p, ic in PAGES:
-        st.button(f"{ic}  {p}" + (f" ({len(ss.fav)})" if p == "Favorit" and ss.fav else ""), key=f"nav{p}",
+        st.button(f"{ic}  {p}", key=f"nav{p}",
                   on_click=go_page, args=(p,), use_container_width=True, type="primary" if ss.page == p else "secondary")
 
 page = ss.page
@@ -308,10 +295,8 @@ if page == "Home":
                     '<p class="sub">Jelajahi rekomendasi buku yang paling relevan dengan minat dan preferensimu.</p>',
                     unsafe_allow_html=True)
         st.button("Mulai Rekomendasi", key="cta", on_click=go_page, args=("Rekomendasi",))
-        st.markdown('<div class="feat"><div><i>📚</i>Hybrid<br>Recommendation</div><div><i>👥</i>User<br>Segmentation</div>'
-                    '<div><i>📊</i>Model<br>Evaluation</div></div>', unsafe_allow_html=True)
 
-    heading("Rekomendasi buku untukmu", "pilih pengguna untuk melihat buku yang paling cocok")
+    heading("Rekomendasi buku")
     c1, c2 = st.columns([1, 3])
     with c1:
         u = user_picker("home_user")
@@ -477,21 +462,6 @@ elif page == "Eksplorasi Data":
         fig = go.Figure(go.Bar(x=dec.index, y=dec.values, marker_color=GREEN))
         with b:
             chart_card("Tahun terbit buku kandidat", style(fig), "Katalog didominasi buku terbitan 1990-an ke atas.")
-
-# =========================================================
-# FAVORIT
-# =========================================================
-elif page == "Favorit":
-    heading("Buku favoritmu", f"{len(ss.fav)} buku")
-    if not ss.fav:
-        st.info("Belum ada favorit. Tekan **♡ Simpan** pada buku mana pun.")
-    else:
-        fv = BOOKS.drop_duplicates("ISBN")
-        fv = fv[fv["ISBN"].isin(ss.fav)]
-        grid(fv, "fv")
-        st.button("Kosongkan favorit", on_click=lambda: ss.fav.clear())
-        st.download_button("⬇️ Unduh daftar favorit", fv[["ISBN", "Book-Title", "Book-Author"]].to_csv(index=False)
-                           .encode("utf-8-sig"), "favorit.csv", "text/csv")
 
 # =========================================================
 # EVALUASI
