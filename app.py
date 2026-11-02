@@ -19,7 +19,8 @@ BASE = Path(__file__).resolve().parent
 FILES = {"model": "cf_model.joblib", "tfidf": "tfidf_matrix.npz", "ratings": "model_ratings.pkl",
          "books": "candidate_books.pkl", "cmp": "cf_comparison.csv", "alpha": "alpha_evaluation.csv",
          "meta": "metadata.json"}
-GD, GREEN, GOLD, INK, LINE = "#1b4d3a", "#3f7a4f", "#f2b01e", "#1d3a2f", "#eadfc8"
+GD, GREEN, GOLD, INK, LINE = "#174936", "#548568", "#d9a928", "#203b30", "#e7decd"
+SAGE, MINT, TERRACOTTA, CREAM = "#9eb9a0", "#dce8d9", "#d98254", "#fbf5ea"
 
 # =========================================================
 # Gaya: krem, hijau tua, emas (mengikuti template hero)
@@ -35,7 +36,7 @@ CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,800;1,600;1,700;1,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 html,body,[class*="css"],[data-testid="stAppViewContainer"]{font-family:'Plus Jakarta Sans',sans-serif;}
-.stApp{background:#fbf5ea;} [data-testid="stHeader"]{background:transparent;}
+.stApp{background:linear-gradient(145deg,#fbf5ea 0%,#f6f3e9 55%,#edf3e9 100%);} [data-testid="stHeader"]{background:transparent;}
 .block-container{padding-top:1.4rem;max-width:1400px;}
 [data-testid="stSidebar"]{background:#1b4d3a;}
 [data-testid="stSidebar"] button{justify-content:flex-start;border:0;border-radius:40px;padding:.6rem 1.1rem;font-weight:700;box-shadow:none;}
@@ -64,7 +65,9 @@ html,body,[class*="css"],[data-testid="stAppViewContainer"]{font-family:'Plus Ja
 /* seksi & kartu */
 .sec{display:flex;gap:.8rem;align-items:baseline;margin:1.6rem 0 .5rem;}
 .sec b{font-family:'Playfair Display',serif;font-size:1.65rem;font-weight:800;color:#1b4d3a;} .sec span{color:#7b8a80;font-size:.9rem;}
-[data-testid="stVerticalBlockBorderWrapper"]{background:#fffdf8;border-radius:20px;border-color:#eadfc8;}
+[data-testid="stVerticalBlockBorderWrapper"]{background:rgba(255,253,248,.88);border-radius:22px;border-color:#e7decd;box-shadow:0 7px 22px rgba(32,59,48,.045);}
+[data-testid="stVerticalBlockBorderWrapper"]:hover{border-color:#c4d5c2;}
+[data-testid="stPlotlyChart"]{border-radius:14px;overflow:hidden;}
 .bk{text-align:center;} .bt{font-weight:800;font-size:.9rem;line-height:1.2;margin-top:.5rem;min-height:2.3em;color:#1b4d3a;}
 .ba{color:#7b8a80;font-size:.78rem;} .bs{color:#b27f00;font-weight:800;font-size:.82rem;}
 .cover{width:100%;max-width:112px;height:150px;object-fit:cover;border-radius:10px;box-shadow:0 8px 18px rgba(27,77,58,.22);display:block;margin:0 auto;}
@@ -77,7 +80,7 @@ html,body,[class*="css"],[data-testid="stAppViewContainer"]{font-family:'Plus Ja
 .row{display:flex;gap:.7rem;align-items:center;padding:.4rem 0;} .row .cover{width:42px;height:60px;max-width:42px;margin:0;box-shadow:none;}
 .row b{font-size:.9rem;display:block;color:#1b4d3a;} .row small{color:#7b8a80;}
 .ct{font-weight:800;color:#1b4d3a;font-size:1.02rem;margin-bottom:.1rem;}
-[data-testid="stMetric"]{background:#fffdf8;border:1px solid #eadfc8;border-radius:18px;padding:.9rem 1.1rem;}
+[data-testid="stMetric"]{background:linear-gradient(145deg,#fffdf8,#f5f5eb);border:1px solid #e7decd;border-radius:20px;padding:1rem 1.15rem;box-shadow:0 6px 18px rgba(32,59,48,.05);}
 [data-testid="stMetricLabel"]{color:#7b8a80;} [data-testid="stMetricValue"]{color:#1b4d3a;font-weight:800;}
 .stButton>button,.stDownloadButton>button{border-radius:12px;border:1px solid #d9cfb4;background:#fffdf8;color:#1b4d3a;font-weight:700;padding:.25rem .6rem;min-height:0;}
 .stButton>button:hover{border-color:#1b4d3a;color:#1b4d3a;background:#f6efdc;}
@@ -244,11 +247,19 @@ def user_picker(key):
 
 
 def style(fig, h=340, legend=False):
-    fig.update_layout(height=h, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=legend,
-                      font=dict(family="Plus Jakarta Sans, sans-serif", color=INK, size=13), bargap=.28,
-                      margin=dict(l=0, r=16, t=8, b=0), legend=dict(orientation="h", y=1.12, x=0, title=""))
-    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="#d9cfb4", title="")
-    fig.update_yaxes(gridcolor="#efe6d0", zeroline=False, title="")
+    fig.update_layout(
+        height=h, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(255,253,248,.35)",
+        showlegend=legend, font=dict(family="Plus Jakarta Sans, sans-serif", color=INK, size=12),
+        bargap=.34, margin=dict(l=8, r=24, t=24 if legend else 12, b=8),
+        legend=dict(orientation="h", y=1.14, x=0, title="", bgcolor="rgba(0,0,0,0)",
+                    font=dict(size=11, color=INK)),
+        hoverlabel=dict(bgcolor="#174936", bordercolor="#174936", font=dict(color="#fffdf8", family="Plus Jakarta Sans")),
+        transition_duration=250
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor="#d9dfd3", title="",
+                     tickfont=dict(color="#607367", size=11))
+    fig.update_yaxes(gridcolor="#e5e9df", gridwidth=1, zeroline=False, title="",
+                     tickfont=dict(color="#42594b", size=11))
     return fig
 
 
@@ -262,12 +273,15 @@ def chart_card(title, fig, note=""):
 
 def hbar(df, x, y, fmt="%{x:,}"):
     d = df.iloc[::-1]
-    colors = [GREEN] * (len(d) - 1) + [GOLD]
-    fig = go.Figure(go.Bar(x=d[x], y=d[y], orientation="h", marker_color=colors, texttemplate=fmt,
-                           textposition="outside", cliponaxis=False))
+    palette = ["#9eb9a0"] * max(0, len(d) - 1) + ["#d9a928"]
+    fig = go.Figure(go.Bar(
+        x=d[x], y=d[y], orientation="h", marker=dict(color=palette, line=dict(width=0),
+        cornerradius=7), texttemplate=fmt, textposition="outside", cliponaxis=False,
+        textfont=dict(color="#42594b", size=11), hovertemplate="%{y}<br><b>%{x:,}</b><extra></extra>"
+    ))
     fig = style(fig, h=max(300, 34 * len(d)))
-    fig.update_xaxes(visible=False)
-    fig.update_yaxes(gridcolor="rgba(0,0,0,0)")
+    fig.update_xaxes(visible=False, showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(0,0,0,0)", automargin=True)
     return fig
 
 
@@ -357,7 +371,7 @@ elif page == "Rekomendasi":
         lab = [f"{i + 1}. {t[:38]}" for i, t in enumerate(recs["Book-Title"])]
         comp = pd.DataFrame({"Buku": lab, "Dari CF": alpha * recs["Skor CF"], "Dari CBF": (1 - alpha) * recs["Skor CBF"]})
         fig = px.bar(comp.melt("Buku", var_name="Sumber", value_name="Skor"), x="Skor", y="Buku", color="Sumber",
-                     orientation="h", color_discrete_map={"Dari CF": GD, "Dari CBF": GOLD}, category_orders={"Buku": lab[::-1]})
+                     orientation="h", color_discrete_map={"Dari CF": "#174936", "Dari CBF": "#d9a928"}, category_orders={"Buku": lab[::-1]})
         chart_card("Dari mana skor tiap rekomendasi berasal", style(fig, h=max(320, 32 * len(recs)), legend=True),
                    f"Bobot CF {alpha:.2f} dan CBF {1 - alpha:.2f}. Semakin panjang bar emas, semakin besar pengaruh kemiripan konten.")
         st.download_button("⬇️ Unduh rekomendasi (CSV)", recs[[c for c in recs.columns if not c.startswith("Image")]]
@@ -418,12 +432,12 @@ elif page == "Eksplorasi Data":
     with t1:
         a, b = st.columns(2)
         dist = R.round().astype(int).value_counts().reindex(range(1, 11), fill_value=0)
-        fig = go.Figure(go.Bar(x=dist.index.astype(str), y=dist.values, marker_color=[GOLD if v == dist.max() else GREEN for v in dist.values]))
+        fig = go.Figure(go.Bar(x=dist.index.astype(str), y=dist.values, marker_color=["#d9a928" if v == dist.max() else "#8eaf98" for v in dist.values], marker_line_width=0))
         with a:
             chart_card("Distribusi rating", style(fig), f"Rating {dist.idxmax()} paling sering diberikan. Pembaca cenderung menilai tinggi.")
         per_u = RATINGS.groupby("User-ID").size()
         bins = pd.cut(per_u, [0, 4, 9, 24, 49, 10**9], labels=["1-4", "5-9", "10-24", "25-49", "50+"]).value_counts().sort_index()
-        fig = go.Figure(go.Bar(x=bins.index.astype(str), y=bins.values, marker_color=GREEN))
+        fig = go.Figure(go.Bar(x=bins.index.astype(str), y=bins.values, marker_color="#8eaf98", marker_line_width=0))
         with b:
             chart_card("Jumlah rating per pembaca", style(fig), f"Median {per_u.median():.0f} rating per pembaca. Riwayat yang pendek membuat personalisasi sulit.")
 
@@ -435,9 +449,9 @@ elif page == "Eksplorasi Data":
             a, b = st.columns(2)
             age = pd.to_numeric(rd["Age"], errors="coerce")
             age = age[(age >= 10) & (age <= 90)]
-            fig = px.histogram(x=age, color_discrete_sequence=[GREEN])
+            fig = px.histogram(x=age, color_discrete_sequence=["#8eaf98"])
             fig.update_traces(xbins=dict(start=10, end=90, size=5))
-            fig.add_vline(x=age.median(), line_dash="dot", line_color=GOLD, annotation_text=f"median {age.median():.0f}")
+            fig.add_vline(x=age.median(), line_dash="dot", line_color="#d9a928", annotation_text=f"median {age.median():.0f}")
             with a:
                 chart_card("Usia pembaca", style(fig), f"{len(age):,} dari {len(rd):,} pembaca punya usia valid (10-90 tahun).")
             cc = rd["Country"].dropna().astype(str).str.strip()
@@ -459,7 +473,7 @@ elif page == "Eksplorasi Data":
         yr = pd.to_numeric(BOOKS["Year-Of-Publication"], errors="coerce")
         yr = yr[(yr >= 1950) & (yr <= 2010)]
         dec = (yr // 10 * 10).astype(int).astype(str).add("-an").value_counts().sort_index()
-        fig = go.Figure(go.Bar(x=dec.index, y=dec.values, marker_color=GREEN))
+        fig = go.Figure(go.Bar(x=dec.index, y=dec.values, marker_color="#8eaf98", marker_line_width=0))
         with b:
             chart_card("Tahun terbit buku kandidat", style(fig), "Katalog didominasi buku terbitan 1990-an ke atas.")
 
@@ -473,7 +487,7 @@ elif page == "Evaluasi Model":
     if not cmp_df.empty:
         ch = cmp_df.melt("Model", value_vars=["RMSE", "MAE"], var_name="Metrik", value_name="Nilai")
         fig = px.bar(ch, x="Model", y="Nilai", color="Metrik", barmode="group", text_auto=".3f",
-                     color_discrete_map={"RMSE": GD, "MAE": GOLD})
+                     color_discrete_map={"RMSE": "#174936", "MAE": "#d9a928"})
         best = cmp_df.sort_values("RMSE").iloc[0]
         with a:
             chart_card("Perbandingan model Collaborative Filtering", style(fig, legend=True),
@@ -482,9 +496,9 @@ elif page == "Evaluasi Model":
     if opts:
         m = st.selectbox("Metrik ranking", opts, index=opts.index("NDCG@10") if "NDCG@10" in opts else 0)
         s = al.sort_values("alpha")
-        fig = px.line(s, x="alpha", y=m, markers=True, color_discrete_sequence=[GD])
+        fig = px.line(s, x="alpha", y=m, markers=True, color_discrete_sequence=["#548568"])
         bp = s.loc[s[m].idxmax()]
-        fig.add_trace(go.Scatter(x=[bp["alpha"]], y=[bp[m]], mode="markers", marker=dict(size=14, color=GOLD, line=dict(width=2, color=GD))))
+        fig.add_trace(go.Scatter(x=[bp["alpha"]], y=[bp[m]], mode="markers", marker=dict(size=13, color="#d9a928", line=dict(width=2, color="#174936"))))
         with b:
             chart_card(f"{m} pada tiap nilai alpha", style(fig), f"Alpha terbaik untuk {m}: {bp['alpha']:.2f}. Alpha adalah bobot CF; sisanya CBF.")
         with st.expander("Lihat tabel lengkap"):
