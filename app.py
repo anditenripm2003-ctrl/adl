@@ -36,24 +36,108 @@ ARTIFACTS = {
 # =========================================================
 st.markdown("""
 <style>
-    .main {background-color: #f7f8fc;}
-    .block-container {padding-top: 1.5rem; padding-bottom: 2rem;}
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+    :root {
+        --green-dark: #173f2b;
+        --green: #247447;
+        --green-mid: #3f8f55;
+        --green-soft: #eaf5e9;
+        --yellow: #f2d34f;
+        --yellow-soft: #fff8d9;
+        --ink: #20352a;
+        --muted: #68796d;
+        --surface: #ffffff;
+        --line: #e2ebdf;
+    }
+
+    html, body, [class*="css"], [data-testid="stAppViewContainer"] {
+        font-family: 'DM Sans', sans-serif;
+        color: var(--ink);
+    }
+    h1, h2, h3, h4, [data-testid="stMetricValue"] {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        letter-spacing: -0.035em;
+    }
+    .stApp {background: #f6f9f2;}
+    [data-testid="stHeader"] {background: rgba(246,249,242,.88);}
+    .block-container {padding-top: 1.7rem; padding-bottom: 2.5rem; max-width: 1450px;}
+
     .hero {
-        padding: 1.35rem 1.6rem; border-radius: 18px;
-        background: linear-gradient(120deg, #13294b, #245b83);
-        color: white; margin-bottom: 1.2rem;
+        padding: 1.8rem 2rem;
+        border-radius: 22px;
+        background: linear-gradient(115deg, #173f2b 0%, #247447 68%, #3f8f55 100%);
+        color: #ffffff;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 12px 30px rgba(23,63,43,.13);
+        border: 1px solid rgba(255,255,255,.14);
+        position: relative;
+        overflow: hidden;
     }
-    .hero h1 {font-size: 2rem; margin: 0 0 .35rem 0;}
-    .hero p {font-size: 1rem; opacity: .9; margin: 0;}
+    .hero:after {
+        content: "";
+        position: absolute;
+        width: 180px; height: 180px;
+        border-radius: 50%;
+        right: -35px; top: -70px;
+        background: rgba(242,211,79,.22);
+    }
+    .hero h1 {
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-size: clamp(1.8rem, 3vw, 2.45rem);
+        font-weight: 800; line-height: 1.2;
+        margin: 0 0 .55rem 0; color: #ffffff;
+    }
+    .hero p {font-size: 1rem; color: #edf8e9; margin: 0; line-height: 1.65;}
+
+    [data-testid="stSidebar"] {
+        background: #edf5e8;
+        border-right: 1px solid #dce9d7;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {color: var(--green-dark);}
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {font-weight: 600;}
+
     div[data-testid="stMetric"] {
-        background: white; padding: 16px; border-radius: 14px;
-        border: 1px solid #e7eaf1;
+        background: var(--surface);
+        padding: 1.1rem 1.15rem;
+        border-radius: 17px;
+        border: 1px solid var(--line);
+        box-shadow: 0 5px 18px rgba(32,53,42,.035);
     }
-    .book-card {
-        background: white; border: 1px solid #e7eaf1;
-        border-radius: 12px; padding: 14px; margin-bottom: 10px;
+    [data-testid="stMetricLabel"] {color: var(--muted); font-weight: 600;}
+    [data-testid="stMetricValue"] {color: var(--green-dark); font-weight: 800;}
+
+    h2, h3 {color: var(--green-dark);}
+    .stButton > button, .stDownloadButton > button,
+    [data-testid="stFormSubmitButton"] > button {
+        border-radius: 11px;
+        border: 1px solid var(--green);
+        background: var(--green);
+        color: #ffffff;
+        font-weight: 700;
+        padding: .55rem 1rem;
+        transition: all .18s ease;
     }
-    .small-note {color: #64748b; font-size: .85rem;}
+    .stButton > button:hover, .stDownloadButton > button:hover,
+    [data-testid="stFormSubmitButton"] > button:hover {
+        background: var(--green-dark);
+        border-color: var(--green-dark);
+        color: #ffffff;
+        transform: translateY(-1px);
+    }
+    div[role="radiogroup"] label, [data-testid="stSelectbox"] label,
+    [data-testid="stSlider"] label, [data-testid="stTextInput"] label {
+        color: var(--green-dark);
+        font-weight: 600;
+    }
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        overflow: hidden;
+    }
+    .small-note {color: var(--muted); font-size: .85rem;}
+    hr {border-color: var(--line);}
 </style>
 """, unsafe_allow_html=True)
 
