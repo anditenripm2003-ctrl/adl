@@ -1,0 +1,122 @@
+{
+  "selected_cf_model": "SVD",
+  "best_knn_params": {
+    "k": 20,
+    "min_k": 3,
+    "sim_options": {
+      "name": "msd",
+      "user_based": true,
+      "min_support": 3
+    }
+  },
+  "best_svd_params": {
+    "n_factors": 20,
+    "n_epochs": 20,
+    "lr_all": 0.005,
+    "reg_all": 0.05
+  },
+  "selected_cf_params": {
+    "n_factors": 20,
+    "n_epochs": 20,
+    "lr_all": 0.005,
+    "reg_all": 0.05
+  },
+  "best_alpha": 0.1,
+  "cf_weight": 0.1,
+  "cbf_weight": 0.9,
+  "min_user_ratings": 20,
+  "min_book_ratings": 10,
+  "like_threshold": 8,
+  "top_k_eval": 10,
+  "n_model_users": 3140,
+  "n_model_books": 2514,
+  "n_model_ratings": 51311,
+  "cf_comparison": [
+    {
+      "Model": "SVD",
+      "RMSE": 1.5349377265800168,
+      "MAE": 1.1751131929747585,
+      "Best Parameters": "{'n_factors': 20, 'n_epochs': 20, 'lr_all': 0.005, 'reg_all': 0.05}"
+    },
+    {
+      "Model": "KNNWithMeans",
+      "RMSE": 1.61270268734225,
+      "MAE": 1.207192446748327,
+      "Best Parameters": "{'k': 20, 'min_k': 3, 'sim_options': {'name': 'msd', 'user_based': True, 'min_support': 3}}"
+    }
+  ],
+  "alpha_evaluation": [
+    {
+      "alpha": 0.1,
+      "Precision@10": 0.034166666666666665,
+      "Recall@10": 0.3416666666666667,
+      "HitRate@10": 0.3416666666666667,
+      "NDCG@10": 0.22419766511265335,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.4,
+      "Precision@10": 0.035,
+      "Recall@10": 0.35,
+      "HitRate@10": 0.35,
+      "NDCG@10": 0.2232318554663279,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.5,
+      "Precision@10": 0.034166666666666665,
+      "Recall@10": 0.3416666666666667,
+      "HitRate@10": 0.3416666666666667,
+      "NDCG@10": 0.22164685413527252,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.2,
+      "Precision@10": 0.034166666666666665,
+      "Recall@10": 0.3416666666666667,
+      "HitRate@10": 0.3416666666666667,
+      "NDCG@10": 0.21917029430316343,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.3,
+      "Precision@10": 0.03333333333333333,
+      "Recall@10": 0.3333333333333333,
+      "HitRate@10": 0.3333333333333333,
+      "NDCG@10": 0.21916369370177186,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.6,
+      "Precision@10": 0.035833333333333335,
+      "Recall@10": 0.35833333333333334,
+      "HitRate@10": 0.35833333333333334,
+      "NDCG@10": 0.21834539642197384,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.7,
+      "Precision@10": 0.03,
+      "Recall@10": 0.3,
+      "HitRate@10": 0.3,
+      "NDCG@10": 0.18103351622287892,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.8,
+      "Precision@10": 0.024166666666666666,
+      "Recall@10": 0.24166666666666667,
+      "HitRate@10": 0.24166666666666667,
+      "NDCG@10": 0.1397412399321832,
+      "Evaluated Users": 120
+    },
+    {
+      "alpha": 0.9,
+      "Precision@10": 0.0175,
+      "Recall@10": 0.175,
+      "HitRate@10": 0.175,
+      "NDCG@10": 0.09252795230048842,
+      "Evaluated Users": 120
+    }
+  ]
+}

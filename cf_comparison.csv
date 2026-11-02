@@ -1,0 +1,3 @@
+Model,RMSE,MAE,Best Parameters
+SVD,1.5349377265800168,1.1751131929747585,"{'n_factors': 20, 'n_epochs': 20, 'lr_all': 0.005, 'reg_all': 0.05}"
+KNNWithMeans,1.61270268734225,1.207192446748327,"{'k': 20, 'min_k': 3, 'sim_options': {'name': 'msd', 'user_based': True, 'min_support': 3}}"
