@@ -1,0 +1,183 @@
+{
+ "n_ratings": 1149780,
+ "n_implicit": 716109,
+ "n_explicit": 433671,
+ "n_users": 278858,
+ "n_books": 271360,
+ "n_users_explicit": 77805,
+ "n_books_explicit": 185973,
+ "mean_rating": 7.601066246071331,
+ "median_user": 1.0,
+ "users_ge5": 14220,
+ "books_ge10": 5645,
+ "books_once": 0.6969882724911681,
+ "isbn_match": 0.8968115639513646,
+ "age_missing": 0.3971985741847105,
+ "age_invalid": 0.004475396079725164,
+ "age_median": 32.0,
+ "year_invalid": 4644,
+ "sparsity": 0.9999700288796584,
+ "rating_dist": {
+  "1": 1770,
+  "2": 2759,
+  "3": 5996,
+  "4": 8904,
+  "5": 50974,
+  "6": 36924,
+  "7": 76457,
+  "8": 103736,
+  "9": 67541,
+  "10": 78610
+ },
+ "user_bins": {
+  "1": 45382,
+  "2-4": 18203,
+  "5-9": 6886,
+  "10-19": 3630,
+  "20-49": 2372,
+  "50+": 1332
+ },
+ "book_bins": {
+  "1": 129621,
+  "2-4": 41817,
+  "5-9": 8890,
+  "10-19": 3466,
+  "20-49": 1642,
+  "50+": 537
+ },
+ "age_hist": {
+  "5": 187,
+  "10": 3244,
+  "15": 15650,
+  "20": 24351,
+  "25": 27188,
+  "30": 23579,
+  "35": 18310,
+  "40": 14380,
+  "45": 12320,
+  "50": 10832,
+  "55": 7979,
+  "60": 4514,
+  "65": 2402,
+  "70": 1194,
+  "75": 450,
+  "80": 165,
+  "85": 34,
+  "90": 49,
+  "95": 13
+ },
+ "countries": {
+  "Usa": 139711,
+  "Canada": 21658,
+  "United Kingdom": 18538,
+  "Germany": 17043,
+  "Spain": 13147,
+  "Australia": 11784,
+  "Italy": 11266,
+  "France": 3455,
+  "Portugal": 3325,
+  "New Zealand": 3097
+ },
+ "authors": [
+  {
+   "author": "Stephen King",
+   "readers": 2224,
+   "avg": 7.82
+  },
+  {
+   "author": "John Grisham",
+   "readers": 1916,
+   "avg": 7.52
+  },
+  {
+   "author": "James Patterson",
+   "readers": 1585,
+   "avg": 7.7
+  },
+  {
+   "author": "Nora Roberts",
+   "readers": 1235,
+   "avg": 7.63
+  },
+  {
+   "author": "Mary Higgins Clark",
+   "readers": 1108,
+   "avg": 7.5
+  },
+  {
+   "author": "J. K. Rowling",
+   "readers": 1004,
+   "avg": 8.97
+  },
+  {
+   "author": "JOHN GRISHAM",
+   "readers": 958,
+   "avg": 7.64
+  },
+  {
+   "author": "Dan Brown",
+   "readers": 948,
+   "avg": 8.12
+  },
+  {
+   "author": "Michael Crichton",
+   "readers": 938,
+   "avg": 7.5
+  },
+  {
+   "author": "Dean R. Koontz",
+   "readers": 923,
+   "avg": 7.57
+  }
+ ],
+ "publishers": [
+  {
+   "publisher": "Ballantine Books",
+   "readers": 7196
+  },
+  {
+   "publisher": "Pocket",
+   "readers": 5565
+  },
+  {
+   "publisher": "Warner Books",
+   "readers": 5478
+  },
+  {
+   "publisher": "Berkley Publishing Group",
+   "readers": 4984
+  },
+  {
+   "publisher": "Bantam",
+   "readers": 4465
+  },
+  {
+   "publisher": "Bantam Books",
+   "readers": 4360
+  },
+  {
+   "publisher": "Penguin Books",
+   "readers": 4322
+  },
+  {
+   "publisher": "Perennial",
+   "readers": 3944
+  },
+  {
+   "publisher": "Signet Book",
+   "readers": 3873
+  },
+  {
+   "publisher": "Vintage Books USA",
+   "readers": 3204
+  }
+ ],
+ "decades": {
+  "1950": 623,
+  "1960": 1773,
+  "1970": 12769,
+  "1980": 52778,
+  "1990": 126016,
+  "2000": 72461
+ }
+}
