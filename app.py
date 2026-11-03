@@ -174,6 +174,16 @@ h1,h2,h3{font-family:'Fraunces',serif !important;color:var(--forest);}
 [data-testid="stPlotlyChart"]{border-radius:14px;overflow:hidden;}
 [data-testid="stExpander"]{border-radius:16px;border-color:var(--line);background:rgba(255,255,255,.6);}
 div[role="dialog"]{border-radius:24px;}
+/* slider tetap bertema meski .streamlit/config.toml belum ada */
+[data-testid="stSlider"] [role="slider"]{background:#1f6b4f !important;border:3px solid #fff !important;box-shadow:0 2px 8px rgba(15,61,46,.35) !important;}
+[data-testid="stSlider"] [data-testid="stSliderThumbValue"],[data-testid="stSlider"] [data-testid="stThumbValue"]{color:#1f6b4f !important;font-weight:700;}
+[data-testid="stSlider"] [data-baseweb="slider"] > div > div > div:first-child{background:linear-gradient(90deg,#1f6b4f,#e3a83b) !important;}
+[data-testid="stSliderTickBarMin"],[data-testid="stSliderTickBarMax"]{color:#6f7d74 !important;}
+[data-testid="stFormSubmitButton"] button{background:linear-gradient(90deg,#0f3d2e,#1f6b4f) !important;border:0 !important;border-radius:14px;padding:.6rem 1rem;}
+[data-testid="stFormSubmitButton"] button p{color:#fff !important;font-weight:800;}
+[data-testid="stForm"]{background:rgba(255,255,255,.78);border-radius:20px;border-color:var(--line) !important;}
+span[data-baseweb="tag"]{background:#1f6b4f !important;border-radius:10px !important;}
+span[data-baseweb="tag"] span{color:#fff !important;}
 </style>
 """
 st.markdown(CSS.replace("__HERO__", hero_bg()), unsafe_allow_html=True)
@@ -220,7 +230,16 @@ def load():
     D["cat"] = cat
     D["bidx"] = cat.set_index("ISBN")
 
+    try:
+        D["vec"] = joblib.load(BASE / "tfidf_vectorizer.joblib") if (BASE / "tfidf_vectorizer.joblib").exists() else None
+    except Exception:
+        D["vec"] = None
     D["eda"] = json.load(open(BASE / "eda_summary.json", encoding="utf-8")) if (BASE / "eda_summary.json").exists() else None
+    if D["eda"] is not None and "lorenz" not in D["eda"]:
+        D["eda"] = None  # format lama: jalankan ulang prep_eda.py
+    D["eda_books"] = (pd.read_csv(BASE / "eda_books.csv", dtype={"ISBN": str}) if (BASE / "eda_books.csv").exists()
+                      else pd.DataFrame(columns=["ISBN", "Book-Title", "Book-Author", "Publisher", "Year-Of-Publication",
+                                                 "Interaksi", "Rating eksplisit", "Rata-rata", "Skor berbobot"]))
     D["cu"] = pd.read_csv(BASE / "cluster_users.csv") if (BASE / "cluster_users.csv").exists() else None
     D["pb"] = pd.read_csv(BASE / "popular_books.csv", dtype={"ISBN": str}) if (BASE / "popular_books.csv").exists() else None
 
@@ -262,6 +281,21 @@ def short(x):
 # =========================================================
 # Logika rekomendasi
 # =========================================================
+def norm_title(t):
+    import re
+    t = re.sub(r"\(.*?\)|\[.*?\]", " ", str(t).lower())
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def dedupe(df, exclude_isbns=(), n=None):
+    """Buang edisi ganda (judul sama, ISBN beda) dan judul yang sudah dibaca/dipilih."""
+    seen = {norm_title(D["bidx"].loc[i, "Book-Title"]) for i in exclude_isbns if i in D["bidx"].index}
+    keys = df["Book-Title"].map(norm_title)
+    keep = ~keys.duplicated() & ~keys.isin(seen)
+    out = df[keep.to_numpy()]
+    return out.head(n) if n else out
+
+
 def liked_of(hist, thr):
     hist = hist[hist["ISBN"].isin(D["row"])]
     liked = hist[hist["Book-Rating"] >= thr]
@@ -304,7 +338,7 @@ def recommend(uid, alpha, top_n, thr):
     cbf = np.zeros(len(isb)) if prof is None else cosine_similarity(prof, TFIDF[[D["row"][i] for i in isb]]).ravel()
     cand["Prediksi CF"], cand["Skor CF"], cand["Skor CBF"] = est, cf_s, cbf
     cand["Skor Hybrid"] = alpha * cf_s + (1 - alpha) * cbf
-    top = cand.sort_values("Skor Hybrid", ascending=False).head(top_n).reset_index(drop=True)
+    top = dedupe(cand.sort_values("Skor Hybrid", ascending=False), hist["ISBN"].tolist(), top_n).reset_index(drop=True)
     top["Karena"] = because(top["ISBN"].tolist(), liked["ISBN"].tolist())
     return top
 
@@ -316,9 +350,111 @@ def recommend_from_books(isbns, top_n):
         return pd.DataFrame()
     s = cosine_similarity(prof, TFIDF).ravel()
     cand = BOOKS.assign(**{"Skor CBF": s})
-    cand = cand[~cand["ISBN"].isin(isbns)].sort_values("Skor CBF", ascending=False).head(top_n).reset_index(drop=True)
+    cand = dedupe(cand[~cand["ISBN"].isin(isbns)].sort_values("Skor CBF", ascending=False), list(isbns), top_n).reset_index(drop=True)
     cand["Karena"] = because(cand["ISBN"].tolist(), list(isbns))
     return cand
+
+
+def decade_of(y):
+    return f"{int(y // 10 * 10)}-an" if pd.notna(y) and 1900 <= y <= 2006 else "Tidak diketahui"
+
+
+@st.cache_resource(show_spinner=False)
+def kproto():
+    p = BASE / "kproto_final.joblib"
+    return joblib.load(p) if p.exists() else None
+
+
+def country_options():
+    cu = D["cu"]
+    if cu is None:
+        return []
+    return sorted(c for c in cu["Country_Cluster"].dropna().astype(str).unique() if c not in ("Other", "Unknown", "", "nan", "None"))
+
+
+def predict_cluster(age, country):
+    kp = kproto()
+    if kp is None:
+        raise FileNotFoundError("kproto_final.joblib belum ada")
+    cval = country if country in country_options() else "Other"
+    return int(kp.predict(np.array([[float(age), cval]], dtype=object), categorical=[1])[0])
+
+
+def lookup_user(uid):
+    """model = dikenal SVD (hybrid) · known = terdaftar di BX-Users tapi riwayat kurang · none = tidak ada."""
+    if uid in D["ucount"]:
+        return "model", None
+    cu = D["cu"]
+    if cu is not None:
+        r = cu[cu["User-ID"] == uid]
+        if len(r):
+            return "known", r.iloc[0]
+    return "none", None
+
+
+def segment_books(cl, n):
+    pb = D["pb"]
+    cb = pb[pd.to_numeric(pb["Cluster"], errors="coerce") == cl].dropna(subset=["Book-Title"])
+    cb = cb.sort_values(["Skor_Buku", "Jumlah_Rating"], ascending=False)
+    return dedupe(cb, n=n) if n < 10**6 else cb
+
+
+@st.cache_data(show_spinner="Menyusun rekomendasi pengguna baru...")
+def newuser_recs(age, country, authors, publishers, decades, favs, n):
+    """Skor = w·preferensi konten (TF-IDF penulis/penerbit/buku favorit) + (1-w)·popularitas segmen K-Prototypes."""
+    cl = predict_cluster(age, country)
+    pool = CAT[CAT["in_model"]].copy()
+    pool = pool[~pool["ISBN"].isin(favs)]
+    seg_map = segment_books(cl, 10**6).set_index("ISBN")["Skor_Buku"]
+    seg = pool["ISBN"].map(seg_map).fillna(pool["bayes"]).fillna(pool["bayes"].min())
+    pool["Skor segmen"] = (seg - seg.min()) / max(seg.max() - seg.min(), 1e-9)
+
+    rows = TFIDF[[D["row"][i] for i in pool["ISBN"]]]
+    pref = np.zeros(len(pool))
+    words = " ".join(list(authors) + list(publishers))
+    vec = D.get("vec")
+    if words.strip() and vec is not None:
+        pref = np.maximum(pref, cosine_similarity(vec.transform([words]), rows).ravel())
+    elif words.strip():  # cadangan tanpa vectorizer: cocokkan teks langsung
+        pref = np.maximum(pref, (pool["Book-Author"].isin(authors) | pool["Publisher"].isin(publishers)).astype(float).to_numpy())
+    prof = profile(list(favs))
+    if prof is not None:
+        pref = np.maximum(pref, cosine_similarity(prof, rows).ravel())
+    has_pref = pref.max() > 0
+    pool["Skor preferensi"] = pref / pref.max() if has_pref else 0.0
+    w = 0.7 if has_pref else 0.0
+    pool["Skor akhir"] = w * pool["Skor preferensi"] + (1 - w) * pool["Skor segmen"]
+
+    relaxed = False
+    if decades:
+        f = pool[pool["Year-Of-Publication"].map(decade_of).isin(decades)]
+        relaxed = f.empty
+        pool = pool if relaxed else f
+    top = dedupe(pool.sort_values("Skor akhir", ascending=False), list(favs), n).reset_index(drop=True)
+
+    why = because(top["ISBN"].tolist(), list(favs)) if favs else [""] * len(top)
+    alasan = []
+    for (_, r), k in zip(top.iterrows(), why):
+        if r["Book-Author"] in authors:
+            alasan.append(f"penulis favoritmu <b>{html.escape(str(r['Book-Author'])[:28])}</b>")
+        elif str(r["Publisher"]) in publishers:
+            alasan.append(f"penerbit favoritmu <b>{html.escape(str(r['Publisher'])[:28])}</b>")
+        elif k and r["Skor preferensi"] > .3:
+            alasan.append(f"mirip <b>{html.escape(k[:34])}</b>")
+        elif r["ISBN"] in seg_map.index:
+            alasan.append(f"favorit segmen <b>Cluster {cl}</b>")
+        else:
+            alasan.append("populer di semua pembaca")
+    top["Alasan"] = alasan
+    return cl, top, has_pref, relaxed
+
+
+def search_books(df, q):
+    k = q.strip()
+    m = pd.Series(False, index=df.index)
+    for c in ["Book-Title", "Book-Author", "Publisher", "ISBN"]:
+        m |= df[c].astype(str).str.contains(k, case=False, regex=False, na=False)
+    return df[m]
 
 
 def similar(isbn, n=5):
@@ -338,6 +474,119 @@ def enrich(df):
     if add:
         df = df.merge(D["bidx"][add].reset_index(), on="ISBN", how="left")
     return df
+
+
+# ---- Ringkasan EDA (dipakai prep_eda.py untuk data mentah & app.py untuk data model) ----
+ALIAS = {"usa": "USA", "us": "USA", "u.s.a.": "USA", "united states": "USA", "uk": "United Kingdom", "u.k.": "United Kingdom",
+         "england": "United Kingdom", "deutschland": "Germany", "espaa": "Spain", "españa": "Spain", "italia": "Italy"}
+
+
+def summarize(B, R, U, m=20):
+    """B = katalog (ISBN, judul, ...), R = interaksi (User-ID, ISBN, Book-Rating), U = profil (User-ID, Age, Country/Location)."""
+    B = B.drop_duplicates("ISBN").copy()
+    B["ISBN"] = B["ISBN"].astype(str)
+    R = R.copy()
+    R["ISBN"] = R["ISBN"].astype(str)
+    R["Book-Rating"] = pd.to_numeric(R["Book-Rating"], errors="coerce")
+    R["User-ID"] = pd.to_numeric(R["User-ID"], errors="coerce")
+    valid = R["Book-Rating"].between(0, 10) & (R["Book-Rating"] % 1 == 0) & R["User-ID"].notna() & R["ISBN"].ne("")
+    invalid = int((~valid).sum())
+    R = R[valid]
+    E = R[R["Book-Rating"] > 0]
+    U = U.copy()
+    U["User-ID"] = pd.to_numeric(U["User-ID"], errors="coerce")
+    U = U.dropna(subset=["User-ID"]).drop_duplicates("User-ID")
+
+    per_all = R.groupby("User-ID").size().reindex(U["User-ID"], fill_value=0)
+    per_u, per_b = E.groupby("User-ID").size(), E.groupby("ISBN").size()
+    act = pd.cut(per_all, [-1, 0, 1, 4, 19, 99, np.inf], labels=["0", "1", "2–4", "5–19", "20–99", "100+"]).value_counts(sort=False)
+    bb = pd.cut(per_b, [0, 1, 4, 9, 19, 49, np.inf], labels=["1", "2–4", "5–9", "10–19", "20–49", "50+"]).value_counts(sort=False)
+
+    arr = np.sort(per_all.to_numpy())[::-1]
+    lorenz, top1 = [], 0.0
+    if arr.sum():
+        cum = np.r_[0, np.cumsum(arr)] / arr.sum() * 100
+        idx = np.unique(np.r_[0, np.linspace(1, len(arr), min(200, len(arr)), dtype=int)])
+        lorenz = [[round(i / len(arr) * 100, 3), round(float(cum[i]), 3)] for i in idx]
+        top1 = float(arr[:max(1, int(np.ceil(len(arr) * .01)))].sum() / arr.sum() * 100)
+
+    age = pd.to_numeric(U["Age"], errors="coerce") if "Age" in U else pd.Series(np.nan, index=U.index)
+    va = age[age.between(5, 100)]
+    ah = pd.cut(va, range(5, 105, 5), right=False).value_counts().sort_index()
+    if "Country" in U:
+        ctry = U["Country"].astype(str).str.strip()
+    elif "Location" in U:
+        ctry = U["Location"].fillna("").astype(str).str.rsplit(",", n=1).str[-1].str.strip()
+    else:
+        ctry = pd.Series("", index=U.index)
+    low = ctry.str.lower().str.strip(' ."')
+    ctry = low.map(ALIAS).fillna(ctry.str.title())
+    ctry = ctry.where(~low.isin(["", "nan", "n/a", "none", "unknown", "other"]), "Tidak diketahui")
+    cc = ctry.value_counts()
+    known = cc.drop("Tidak diketahui", errors="ignore")
+    countries = {k: int(v) for k, v in known.head(8).items()}
+    if len(known) > 8:
+        countries["Lainnya"] = int(known.iloc[8:].sum())
+
+    yr = pd.to_numeric(B.get("Year-Of-Publication"), errors="coerce")
+    vy = yr[yr.between(1950, 2004)]
+    dec = (vy // 10 * 10).astype(int).value_counts().sort_index()
+    EB = E.merge(B[["ISBN", "Book-Author", "Publisher"]], on="ISBN")
+    au = EB.groupby("Book-Author").agg(readers=("User-ID", "nunique"), avg=("Book-Rating", "mean")).sort_values("readers", ascending=False).head(10)
+    pub = EB.groupby("Publisher").agg(readers=("User-ID", "nunique")).sort_values("readers", ascending=False).head(10)
+
+    ex_match = E[E["ISBN"].isin(B["ISBN"])]
+    pairs = ex_match[["User-ID", "ISBN"]].drop_duplicates()
+    possible = pairs["User-ID"].nunique() * pairs["ISBN"].nunique()
+    inter = R.groupby("ISBN").size().rename("Interaksi")
+    st_ = E.groupby("ISBN")["Book-Rating"].agg(["size", "mean"]).rename(columns={"size": "Rating eksplisit", "mean": "Rata-rata"})
+    bm = B.merge(inter, on="ISBN", how="left").merge(st_, on="ISBN", how="left")
+    for c in ("Interaksi", "Rating eksplisit"):
+        bm[c] = bm[c].fillna(0).astype(int)
+    C = float(ex_match["Book-Rating"].mean()) if len(ex_match) else 0.0
+    n = bm["Rating eksplisit"]
+    bm["Skor berbobot"] = ((n * bm["Rata-rata"].fillna(0) + m * C) / (n + m)).where(n > 0)
+    unmatched = int((~R["ISBN"].isin(B["ISBN"])).sum())
+
+    S = {
+        "n_ratings": int(len(R)), "n_implicit": int((R["Book-Rating"] == 0).sum()), "n_explicit": int(len(E)),
+        "n_users": int(len(U)), "n_books": int(len(B)), "n_users_explicit": int(per_u.size), "n_books_explicit": int(per_b.size),
+        "mean_rating": float(E["Book-Rating"].mean()) if len(E) else 0.0, "catalog_mean": C,
+        "median_user": float(per_u.median()) if len(per_u) else 0.0, "users_ge5": int((per_u >= 5).sum()),
+        "books_ge10": int((per_b >= 10).sum()), "books_once": float((per_b == 1).mean()) if len(per_b) else 0.0,
+        "isbn_match": float(1 - unmatched / max(len(R), 1)), "age_missing": float(age.isna().mean()),
+        "age_out": int((age.notna() & ~age.between(5, 100)).sum()), "age_valid": int(len(va)),
+        "age_median": float(va.median()) if len(va) else 0.0,
+        "year_invalid": int((~yr.between(1950, 2004)).sum()), "density": float(len(pairs) / possible * 100) if possible else 0.0,
+        "top1_share": top1, "lorenz": lorenz, "weight_m": m,
+        "rating_dist": {str(k): int(E["Book-Rating"].astype(int).eq(k).sum()) for k in range(1, 11)},
+        "activity": {str(k): int(v) for k, v in act.items()}, "book_bins": {str(k): int(v) for k, v in bb.items()},
+        "age_hist": {f"{int(i.left)}": int(v) for i, v in ah.items()}, "countries": countries,
+        "country_unknown": int(cc.get("Tidak diketahui", 0)),
+        "authors": [{"author": k, "readers": int(r.readers), "avg": round(float(r.avg), 2)} for k, r in au.iterrows()],
+        "publishers": [{"publisher": k, "readers": int(r.readers)} for k, r in pub.iterrows()],
+        "decades": {str(k): int(v) for k, v in dec.items()},
+        "coverage": {"Interaksi cocok dengan katalog": float(100 - unmatched / max(len(R), 1) * 100),
+                     "ISBN katalog punya interaksi": float(bm["Interaksi"].gt(0).mean() * 100),
+                     "ISBN katalog punya rating eksplisit": float(bm["Rating eksplisit"].gt(0).mean() * 100)},
+        "audit": {"Baris rating tidak valid": invalid,
+                  "Pasangan pengguna–ISBN berulang": int(R.duplicated(["User-ID", "ISBN"]).sum()),
+                  "Interaksi tanpa metadata buku": unmatched,
+                  "Interaksi tanpa profil pengguna": int((~R["User-ID"].isin(U["User-ID"])).sum()),
+                  "ISBN tanpa rating eksplisit": int(bm["Rating eksplisit"].eq(0).sum()),
+                  "Profil tanpa interaksi": int(per_all.eq(0).sum())},
+    }
+    cols = ["ISBN", "Book-Title", "Book-Author", "Publisher", "Year-Of-Publication", "Interaksi", "Rating eksplisit", "Rata-rata", "Skor berbobot"]
+    return S, bm[[c for c in cols if c in bm.columns]]
+
+
+@st.cache_data(show_spinner="Menghitung ringkasan data model...")
+def model_eda():
+    U = pd.DataFrame({"User-ID": RATINGS["User-ID"].dropna().astype(int).unique()})
+    if D["cu"] is not None:
+        U = U.merge(D["cu"][["User-ID", "Age", "Country"]].drop_duplicates("User-ID"), on="User-ID", how="left")
+    return summarize(BOOKS, RATINGS, U)
+
 
 
 # =========================================================
@@ -436,7 +685,9 @@ def grid(df, key, ncols=5, score=None, score_label="Kecocokan", rank=False, why=
                 v = float(row[score])
                 extra = (f'<div class="match">{score_label} {num(v, 3)}</div>'
                          f'<div class="mbar"><i style="width:{max(4, v / top * 100):.0f}%"></i></div>')
-            if why:
+            if why and isinstance(row.get("Alasan"), str):
+                extra += f'<div class="why">{row["Alasan"]}</div>'
+            elif why:
                 k = str(row.get("Karena") or "")
                 extra += (f'<div class="why">mirip <b>{html.escape(k[:38])}</b></div>' if k
                           else '<div class="why">dari pola rating pembaca serupa</div>')
@@ -529,12 +780,13 @@ with st.sidebar:
         st.button(f"{ic}   {p}", key=f"nav{p}", on_click=go_page, args=(p,), use_container_width=True,
                   type="primary" if ss.page == p else "secondary")
     st.markdown(f'<div class="side-note"><b>Mesin utama</b><br>Hybrid = {BEST_ALPHA:.1f}·CF (SVD) + {1 - BEST_ALPHA:.1f}·CBF (TF-IDF).'
-                f'<br><br><b>Pengguna baru</b><br>CBF dari buku pilihan, atau K-Prototypes dari usia &amp; negara.'
+                f'<br><br><b>Pengguna baru</b><br>Form usia &amp; negara (K-Prototypes) + preferensi penulis, penerbit, dekade.'
                 f'<br><br><b>★ Bintang</b><br>Rating umum 1-10 seluruh pembaca, dikonversi ke 5 bintang.</div>',
                 unsafe_allow_html=True)
 
 page = ss.page
-E = D["eda"]
+RAW = D["eda"]
+E = RAW
 
 # =========================================================
 # BERANDA
@@ -551,12 +803,25 @@ if page == "Beranda":
             f'<span class="chip"><b>{num(len(RATINGS))}</b>rating latih</span></div>', unsafe_allow_html=True)
         st.button("Mulai rekomendasi  →", key="cta", on_click=go_page, args=("Rekomendasi",))
 
+    heading("Cari buku", "Pencarian", "judul, penulis, penerbit, atau ISBN")
+    hq = st.text_input("Cari buku", placeholder="🔎  mis. Harry Potter, Grisham, Penguin, 0439...", key="home_q",
+                       label_visibility="collapsed")
+    if hq.strip():
+        hits = search_books(CAT, hq).sort_values("n", ascending=False)
+        if hits.empty:
+            st.warning("Tidak ada buku yang cocok. Coba kata kunci lain.")
+        else:
+            st.caption(f"{num(len(hits))} buku ditemukan · menampilkan 5 teratas")
+            grid(hits.head(5), "hs")
+            st.button("Lihat semua hasil di Katalog →", key="to_cat",
+                      on_click=lambda: ss.update(page="Katalog", cat_q=hq))
+
     heading("Bagaimana rekomendasi dibuat", "Cara kerja", "satu mesin utama, dua jalur untuk pengguna baru")
     s = st.columns(4)
     steps = [("#1f6b4f", "01 · CF", "Collaborative Filtering", "SVD mempelajari pola rating ribuan pembaca untuk memprediksi rating buku yang belum dibaca."),
              ("#e3a83b", "02 · CBF", "Content-Based", "TF-IDF judul, penulis, penerbit, tahun. Buku yang mirip dengan favoritmu mendapat skor tinggi."),
              ("#0f3d2e", "03 · HYBRID", "Skor gabungan", f"Skor = α·CF + (1−α)·CBF, dengan α = {BEST_ALPHA:.1f} hasil evaluasi NDCG@10."),
-             ("#8c2f39", "04 · BARU", "Pengguna baru", "Pilih buku favorit (CBF), atau isi usia dan negara untuk rekomendasi dari segmen K-Prototypes.")]
+             ("#8c2f39", "04 · BARU", "Pengguna baru", "Isi form usia, negara, serta penulis, penerbit, atau buku favorit: K-Prototypes + kemiripan konten.")]
     for c, (col, n, t, d) in zip(s, steps):
         c.markdown(f'<div class="step" style="--c:{col}"><div class="n">{n}</div><b>{t}</b><p>{d}</p></div>', unsafe_allow_html=True)
 
@@ -567,7 +832,7 @@ if page == "Beranda":
         hist = RATINGS[RATINGS["User-ID"] == u]
         st.markdown(f'<div class="note g">Pembaca <b>{u}</b> sudah menilai <b>{len(hist)}</b> buku dengan rata-rata '
                     f'<b>{num(hist["Book-Rating"].mean(), 1)}/10</b>.</div>', unsafe_allow_html=True)
-        st.button("Lihat semua rekomendasi →", on_click=go_page, args=("Rekomendasi",), use_container_width=True)
+        st.button("Lihat semua rekomendasi →", on_click=go_page, args=("Rekomendasi",), use_container_width=True, key="w_button_lihat_semua_rekomendasi")
     with c2:
         recs = recommend(u, BEST_ALPHA, 4, LIKE_THR)
         if recs.empty:
@@ -577,16 +842,17 @@ if page == "Beranda":
 
     heading("Buku populer", "Trending", "dari seluruh rating eksplisit Book-Crossing")
     a, b = st.columns([3, 1])
-    mode = a.radio("Urutkan", ["🔥 Paling banyak dinilai", "⭐ Rating tertinggi"], horizontal=True, label_visibility="collapsed")
-    n_show = b.select_slider("Jumlah", [5, 10, 15], value=5, label_visibility="collapsed")
+    mode = a.radio("Urutkan", ["🔥 Paling banyak dinilai", "⭐ Rating tertinggi"], horizontal=True, label_visibility="collapsed", key="w_radio_urutkan")
+    n_show = b.select_slider("Jumlah", [5, 10, 15], value=5, label_visibility="collapsed", key="w_select_slider_jumlah")
     pop = CAT[CAT["in_model"]]
     if mode.startswith("🔥"):
         pop = pop.sort_values("n", ascending=False)
     else:
         pop = pop[pop["n"] >= 30].sort_values("bayes", ascending=False)
         st.caption("Diurutkan dengan Bayesian Weighted Rating (minimal 30 rating) agar buku dengan sedikit rating tidak mendominasi.")
-    grid(pop.head(n_show), "pop", rank=True)
+    grid(dedupe(pop, n=n_show), "pop", rank=True)
 
+    E = RAW or model_eda()[0]
     if E:
         heading("Penulis teratas", "Top authors", "berdasarkan jumlah pembaca unik yang memberi rating")
         au = E["authors"][:6]
@@ -607,168 +873,185 @@ if page == "Beranda":
 # REKOMENDASI
 # =========================================================
 elif page == "Rekomendasi":
-    page_title("Rekomendasi buku", "Pilih jalur sesuai kondisi pembaca: sudah punya riwayat atau pengguna baru.")
-    t1, t2, t3 = st.tabs(["👤  Punya User-ID · Hybrid", "📖  Pengguna baru · Pilih buku favorit", "🌍  Pengguna baru · Usia & negara"])
+    page_title("Rekomendasi buku", "Masukkan User-ID untuk rekomendasi personal, atau isi form jika kamu pengguna baru.")
+    t1, t2 = st.tabs(["🔎  Masukkan User-ID", "📝  Form pengguna baru"])
 
-    # ---- Hybrid ----
+    # ---- Ketik User-ID ----
     with t1:
-        c1, c2, c3, c4 = st.columns([1.4, 1, 1, 1])
-        with c1:
-            u = user_picker("rec_user")
-        top_n = c2.select_slider("Jumlah buku", [5, 10, 15, 20], value=10)
-        alpha = c3.slider("α (bobot CF)", 0.0, 1.0, float(np.clip(BEST_ALPHA, 0, 1)), 0.05,
-                          help=f"0 = murni konten, 1 = murni CF. Nilai terbaik hasil evaluasi: {BEST_ALPHA}.")
-        thr = c4.slider("Ambang 'disukai'", 1, 10, LIKE_THR, help="Rating minimal agar buku dianggap disukai (membentuk profil CBF).")
+        ss.setdefault("uid_in", int(ss.user))
 
-        hist = RATINGS[RATINGS["User-ID"] == u].sort_values("Book-Rating", ascending=False)
-        liked = liked_of(hist, thr)
-        top_au = enrich(hist)["Book-Author"].value_counts()
-        kpis([("📚", "g1", "Buku dinilai", num(len(hist)), "riwayat di data latih"),
-              ("⭐", "g2", "Rata-rata rating", f"{num(hist['Book-Rating'].mean(), 1)}/10", f"≈ {num(hist['Book-Rating'].mean() / 2, 1)} bintang"),
-              ("❤️", "g3", "Buku disukai", num(len(liked)), f"rating ≥ {thr} → profil konten"),
-              ("✍️", "g4", "Penulis favorit", html.escape(str(top_au.index[0])[:18]) if len(top_au) else "-",
-               f"{top_au.iloc[0]} buku dinilai" if len(top_au) else "")])
+        def _pick():
+            ss.uid_in = int(ss.quick_uid)
 
-        recs = recommend(u, alpha, top_n, thr)
-        left, right = st.columns([3.3, 1])
-        with right:
-            heading("Rak favoritnya", "Profil", "buku dengan rating tertinggi")
-            with st.container(border=True):
-                shelf(hist, 6)
-        with left:
-            heading(f"Top {top_n} untuk pembaca {u}", "Hybrid CF + CBF",
-                    "bar hijau-emas = skor hybrid relatif terhadap peringkat #1")
-            if recs.empty:
-                st.warning("Tidak ada buku baru untuk pembaca ini.")
+        c1, c2, c3, c4, c5 = st.columns([1.1, 1.3, 1, 1, 1])
+        uid = int(c1.number_input("Ketik User-ID", min_value=1, step=1, key="uid_in",
+                                  help="User-ID dari dataset Book-Crossing (BX-Users)."))
+        c2.selectbox("…atau pilih pembaca aktif", D["uids"], key="quick_uid", on_change=_pick,
+                     index=D["uids"].index(ss.user) if ss.user in D["uids"] else 0,
+                     format_func=lambda u: f"{u}  ·  {D['ucount'].get(u, 0)} rating")
+        top_n = c3.select_slider("Jumlah buku", [5, 10, 15, 20], value=10, key="w_select_slider_jumlah_buku")
+        alpha = c4.slider("α (bobot CF)", 0.0, 1.0, float(np.clip(BEST_ALPHA, 0, 1)), 0.05,
+                          help=f"0 = murni konten, 1 = murni CF. Nilai terbaik hasil evaluasi: {BEST_ALPHA}.", key="w_slider_bobot_cf")
+        thr = c5.slider("Ambang 'disukai'", 1, 10, LIKE_THR, help="Rating minimal agar buku dianggap disukai (membentuk profil CBF).", key="w_slider_ambang_disukai")
+
+        status, urow = lookup_user(uid)
+        if status == "none":
+            st.warning(f"User-ID **{uid}** tidak ditemukan di data Book-Crossing. Gunakan tab **Form pengguna baru**, "
+                       "atau pilih salah satu pembaca aktif.")
+        elif status == "known":
+            age_txt = f"{urow['Age']:.0f} tahun" if pd.notna(urow.get("Age")) else "usia tidak diisi"
+            cl = int(urow["Cluster"])
+            note(f"User-ID <b>{uid}</b> terdaftar ({age_txt}, {html.escape(str(urow.get('Country', '-')))}), tetapi riwayat ratingnya "
+                 f"kurang dari {META.get('min_user_ratings', 20)} buku sehingga <b>belum dikenal model hybrid</b>. "
+                 f"Rekomendasi diambil dari segmen K-Prototypes-nya: <b>Cluster {cl}</b>. Isi tab Form pengguna baru "
+                 "untuk hasil yang lebih personal.")
+            cb = segment_books(cl, top_n) if D["pb"] is not None else pd.DataFrame()
+            heading(f"Rekomendasi untuk pembaca {uid}", "Segmen K-Prototypes", "skor segmen = Bayesian Weighted Rating dalam cluster")
+            if cb.empty:
+                st.info("Belum ada buku untuk segmen ini.")
             else:
-                grid(recs, "hy", score="Skor Hybrid", score_label="Skor hybrid", rank=True, why=True)
-
-        if not recs.empty:
-            lab = [f"{i + 1}. {str(t)[:34]}" for i, t in enumerate(recs["Book-Title"])]
-            fig = go.Figure()
-            fig.add_bar(y=lab, x=alpha * recs["Skor CF"], name=f"Kontribusi CF (α={alpha:.2f})", orientation="h",
-                        marker=dict(color=FOREST, cornerradius=4))
-            fig.add_bar(y=lab, x=(1 - alpha) * recs["Skor CBF"], name=f"Kontribusi CBF (1−α={1 - alpha:.2f})", orientation="h",
-                        marker=dict(color=GOLD, cornerradius=4))
-            fig.update_layout(barmode="stack")
-            fig = style(fig, h=max(320, 30 * len(recs)), legend=True)
-            fig.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)", tickfont=dict(color=INK))
-            a, b = st.columns([1.6, 1])
-            with a:
-                chart_card("Dari mana skor tiap rekomendasi berasal", fig, "skor hybrid = α·CF + (1−α)·CBF",
-                           "Bar emas yang panjang berarti buku itu direkomendasikan karena <b>mirip</b> dengan buku yang disukai; "
-                           "bar hijau berarti didorong oleh <b>pola rating</b> pembaca lain.")
-            with b:
-                f2 = go.Figure(go.Scatter(x=recs["Skor CBF"], y=recs["Prediksi CF"], mode="markers+text",
-                                          text=[str(i + 1) for i in range(len(recs))], textposition="middle center",
-                                          textfont=dict(color="#fff", size=10),
-                                          marker=dict(size=24, color=recs["Skor Hybrid"], colorscale=[[0, SAGE], [1, GOLD]],
-                                                      line=dict(color=FOREST, width=1.5)),
-                                          customdata=recs["Book-Title"],
-                                          hovertemplate="%{customdata}<br>CBF %{x:.3f} · prediksi CF %{y:.2f}/10<extra></extra>"))
-                f2 = style(f2, h=max(320, 30 * len(recs)))
-                f2.update_xaxes(title="Kemiripan konten (CBF)", showgrid=True, gridcolor="#ece5d6")
-                f2.update_yaxes(title="Prediksi rating SVD (1-10)")
-                chart_card("Peta rekomendasi", f2, "nomor = peringkat",
-                           "Kanan atas = cocok dari dua sisi: mirip konten dan diprediksi dinilai tinggi.")
-            st.download_button("⬇️  Unduh rekomendasi (CSV)",
-                               recs[["ISBN", "Book-Title", "Book-Author", "Prediksi CF", "Skor CF", "Skor CBF", "Skor Hybrid"]]
-                               .to_csv(index=False).encode("utf-8-sig"), f"rekomendasi_user_{u}.csv", "text/csv")
-
-    # ---- Pengguna baru: pilih buku ----
-    with t2:
-        note("Belum punya User-ID? Pilih <b>1-5 buku yang kamu sukai</b>. Sistem membentuk profil konten dari buku itu "
-             "lalu mencari buku dengan judul, penulis, dan penerbit yang paling mirip (Content-Based Filtering). "
-             "CF tidak dipakai karena model SVD belum mengenal pengguna baru.", green=True)
-        opts = CAT[CAT["in_model"]].sort_values("n", ascending=False)
-        label = dict(zip(opts["ISBN"], opts["Book-Title"].str.slice(0, 70) + " — " + opts["Book-Author"].astype(str)))
-        a, b = st.columns([3, 1])
-        picks = a.multiselect("Buku yang kamu sukai", list(label), format_func=label.get, max_selections=5,
-                              placeholder="Ketik judul atau penulis...", default=list(label)[:0])
-        n_new = b.select_slider("Jumlah rekomendasi", [5, 10, 15], value=10, key="nn")
-        if not picks:
-            st.caption("Belum ada pilihan. Contoh: pilih beberapa novel Harry Potter atau John Grisham.")
-            heading("Atau mulai dari buku terpopuler", "Inspirasi")
-            grid(opts.head(5), "insp")
+                grid(cb, "known", score="Skor_Buku", score_label="Skor segmen", rank=True)
         else:
-            with st.container(border=True):
-                st.markdown('<div class="ct">Buku pilihanmu</div>', unsafe_allow_html=True)
-                cols = st.columns(len(picks))
-                for c, i in zip(cols, picks):
-                    r = D["bidx"].loc[i]
-                    c.markdown(f'<div class="row">{cover(r.get("Image-URL-M"), r["Book-Title"], "")}<div><b>'
-                               f'{html.escape(str(r["Book-Title"])[:40])}</b><small>{html.escape(str(r["Book-Author"]))}</small></div></div>',
-                               unsafe_allow_html=True)
-            nr = recommend_from_books(tuple(picks), n_new)
-            heading("Rekomendasi untukmu", "Content-Based", "diurutkan dari kemiripan konten tertinggi")
-            grid(nr, "nb", score="Skor CBF", score_label="Kemiripan", rank=True, why=True)
+            ss.user = uid
+            hist = RATINGS[RATINGS["User-ID"] == uid].sort_values("Book-Rating", ascending=False)
+            liked = liked_of(hist, thr)
+            top_au = enrich(hist)["Book-Author"].value_counts()
+            kpis([("📚", "g1", "Buku dinilai", num(len(hist)), "riwayat di data latih"),
+                  ("⭐", "g2", "Rata-rata rating", f"{num(hist['Book-Rating'].mean(), 1)}/10", f"≈ {num(hist['Book-Rating'].mean() / 2, 1)} bintang"),
+                  ("❤️", "g3", "Buku disukai", num(len(liked)), f"rating ≥ {thr} → profil konten"),
+                  ("✍️", "g4", "Penulis favorit", html.escape(str(top_au.index[0])[:18]) if len(top_au) else "-",
+                   f"{top_au.iloc[0]} buku dinilai" if len(top_au) else "")])
 
-    # ---- Pengguna baru: cluster ----
-    with t3:
-        note("Tidak ingin memilih buku? Isi <b>usia dan negara</b>. Model K-Prototypes menempatkanmu ke segmen pembaca "
-             "yang mirip, lalu menampilkan buku favorit segmen itu (diurutkan dengan Bayesian Weighted Rating). "
-             "Jalur ini terpisah dan <b>tidak</b> ikut dalam skor hybrid.")
-        need = ["kproto_final.joblib", "cluster_users.csv", "popular_books.csv"]
-        miss = [f for f in need if not (BASE / f).exists()]
-        if miss:
-            st.warning("Artefak clustering belum ada: " + ", ".join(miss))
+            recs = recommend(uid, alpha, top_n, thr)
+            left, right = st.columns([3.3, 1])
+            with right:
+                heading("Rak favoritnya", "Profil", "buku dengan rating tertinggi")
+                with st.container(border=True):
+                    shelf(hist, 6)
+            with left:
+                heading(f"Top {top_n} untuk pembaca {uid}", "Hybrid CF + CBF",
+                        "bar hijau-emas = skor hybrid relatif terhadap peringkat #1")
+                if recs.empty:
+                    st.warning("Tidak ada buku baru untuk pembaca ini.")
+                else:
+                    grid(recs, "hy", score="Skor Hybrid", score_label="Skor hybrid", rank=True, why=True)
+
+            if not recs.empty:
+                lab = [f"{i + 1}. {str(t)[:34]}" for i, t in enumerate(recs["Book-Title"])]
+                fig = go.Figure()
+                fig.add_bar(y=lab, x=alpha * recs["Skor CF"], name=f"Kontribusi CF (α={alpha:.2f})", orientation="h",
+                            marker=dict(color=FOREST, cornerradius=4))
+                fig.add_bar(y=lab, x=(1 - alpha) * recs["Skor CBF"], name=f"Kontribusi CBF (1−α={1 - alpha:.2f})", orientation="h",
+                            marker=dict(color=GOLD, cornerradius=4))
+                fig.update_layout(barmode="stack")
+                fig = style(fig, h=max(320, 30 * len(recs)), legend=True)
+                fig.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)", tickfont=dict(color=INK))
+                a, b = st.columns([1.6, 1])
+                with a:
+                    chart_card("Dari mana skor tiap rekomendasi berasal", fig, "skor hybrid = α·CF + (1−α)·CBF",
+                               "Bar emas yang panjang berarti buku itu direkomendasikan karena <b>mirip</b> dengan buku yang disukai; "
+                               "bar hijau berarti didorong oleh <b>pola rating</b> pembaca lain.")
+                with b:
+                    f2 = go.Figure(go.Scatter(x=recs["Skor CBF"], y=recs["Prediksi CF"], mode="markers+text",
+                                              text=[str(i + 1) for i in range(len(recs))], textposition="middle center",
+                                              textfont=dict(color="#fff", size=10),
+                                              marker=dict(size=24, color=recs["Skor Hybrid"], colorscale=[[0, SAGE], [1, GOLD]],
+                                                          line=dict(color=FOREST, width=1.5)),
+                                              customdata=recs["Book-Title"],
+                                              hovertemplate="%{customdata}<br>CBF %{x:.3f} · prediksi CF %{y:.2f}/10<extra></extra>"))
+                    f2 = style(f2, h=max(320, 30 * len(recs)))
+                    f2.update_xaxes(title="Kemiripan konten (CBF)", showgrid=True, gridcolor="#ece5d6")
+                    f2.update_yaxes(title="Prediksi rating SVD (1-10)")
+                    chart_card("Peta rekomendasi", f2, "nomor = peringkat",
+                               "Kanan atas = cocok dari dua sisi: mirip konten dan diprediksi dinilai tinggi.")
+                st.download_button("⬇️  Unduh rekomendasi (CSV)",
+                                   recs[["ISBN", "Book-Title", "Book-Author", "Prediksi CF", "Skor CF", "Skor CBF", "Skor Hybrid"]]
+                                   .to_csv(index=False).encode("utf-8-sig"), f"rekomendasi_user_{uid}.csv", "text/csv", key="w_download_button_unduh_rekomendasi_csv")
+
+    # ---- Form pengguna baru ----
+    with t2:
+        note("Belum punya User-ID? Isi <b>usia dan negara</b> (wajib) agar K-Prototypes menempatkanmu ke segmen pembaca yang mirip. "
+             "Tambahkan <b>penulis, penerbit, dekade, atau buku favorit</b> (opsional) supaya hasilnya lebih personal. "
+             "Model SVD tidak dipakai karena belum mengenal pengguna baru.", green=True)
+        pool = CAT[CAT["in_model"]]
+        ctry = country_options()
+        au_opts = pool["Book-Author"].value_counts().index.tolist()
+        pub_opts = pool["Publisher"].astype(str).value_counts().index.tolist()
+        dec_opts = sorted(d for d in pool["Year-Of-Publication"].map(decade_of).unique() if d != "Tidak diketahui")
+        pop_books = pool.sort_values("n", ascending=False)
+        blabel = dict(zip(pop_books["ISBN"], pop_books["Book-Title"].str.slice(0, 60) + " — " + pop_books["Book-Author"].astype(str)))
+        with st.form("form_baru", border=True):
+            st.markdown('<div class="ct">📝 Profil pembaca baru</div>', unsafe_allow_html=True)
+            a, b, c = st.columns([1.4, .8, 1.2])
+            nama = a.text_input("Nama (opsional)", placeholder="mis. Andi", key="w_text_input_nama_opsional")
+            age = b.number_input("Usia *", 5, 100, 25, key="w_number_input_usia")
+            country = c.selectbox("Negara *", ctry + ["Lainnya"], index=ctry.index("USA") if "USA" in ctry else 0, key="w_selectbox_negara")
+            a, b, c = st.columns(3)
+            authors = a.multiselect("Penulis favorit", au_opts, max_selections=5, placeholder="Ketik nama penulis...", key="w_multiselect_penulis_favorit")
+            pubs = b.multiselect("Penerbit favorit", pub_opts, max_selections=5, placeholder="Ketik nama penerbit...", key="w_multiselect_penerbit_favorit")
+            decs = c.multiselect("Dekade terbit", dec_opts, placeholder="Semua dekade", key="w_multiselect_dekade_terbit")
+            a, b = st.columns([3, 1])
+            favs = a.multiselect("Buku yang pernah kamu sukai", list(blabel), format_func=blabel.get, max_selections=5,
+                                 placeholder="Ketik judul buku...", key="w_multiselect_buku_yang_pernah_kamu_sukai")
+            n_new = b.select_slider("Jumlah rekomendasi", [5, 10, 15, 20], value=10, key="w_select_slider_jumlah_rekomendasi")
+            sent = st.form_submit_button("✨  Tampilkan rekomendasi", type="primary", use_container_width=True, key="w_form_submit_button_tampilkan_rekomendasi")
+        if sent:
+            ss.nu = dict(nama=nama.strip(), age=int(age), country=country, authors=tuple(authors), pubs=tuple(pubs),
+                         decs=tuple(decs), favs=tuple(favs), n=n_new)
+        nu = ss.get("nu")
+        if not nu:
+            st.caption("Isi form lalu klik **Tampilkan rekomendasi**.")
         else:
             try:
-                kp = joblib.load(BASE / need[0])
-                cu, pb = D["cu"], D["pb"]
-                ctry = sorted(c for c in cu["Country_Cluster"].dropna().astype(str).unique() if c not in ("Other", "Unknown", "", "nan", "None"))
-                c1, c2, c3 = st.columns(3)
-                age = c1.slider("Usia", 5, 100, 27)
-                country = c2.selectbox("Negara", ctry + ["Lainnya"], index=ctry.index("USA") if "USA" in ctry else 0)
-                n_c = c3.select_slider("Jumlah buku", [5, 10, 15, 20], value=10)
-                cval = country if country in ctry else "Other"
-                cl = int(kp.predict(np.array([[float(age), cval]], dtype=object), categorical=[1])[0])
-                prof = cu[pd.to_numeric(cu["Cluster"], errors="coerce") == cl]
-                pa = pd.to_numeric(prof["Age"], errors="coerce")
-                cb = pb[pd.to_numeric(pb["Cluster"], errors="coerce") == cl].dropna(subset=["Book-Title"])
-                kpis([("🧭", "g1", "Segmen kamu", f"Cluster {cl}", "hasil K-Prototypes"),
-                      ("👥", "g4", "Anggota segmen", short(len(prof)), f"{len(prof) / len(cu) * 100:.0f}% dari semua pengguna"),
-                      ("🎂", "g2", "Usia rata-rata", f"{pa.mean():.0f} th", f"median {pa.median():.0f} th"),
-                      ("🌍", "g3", "Negara dominan", str(prof["Country_Cluster"].mode().iat[0]) if len(prof) else "-",
-                       f"{(prof['Country_Cluster'] == prof['Country_Cluster'].mode().iat[0]).mean() * 100:.0f}% anggota" if len(prof) else "")])
-                if cb.empty:
-                    st.warning("Belum ada buku untuk segmen ini.")
-                else:
-                    heading(f"Favorit segmen Cluster {cl}", "K-Prototypes",
-                            "skor segmen = Bayesian Weighted Rating dalam cluster · bintang = rating umum")
-                    grid(cb.sort_values(["Skor_Buku", "Jumlah_Rating"], ascending=False).head(n_c), "cl",
-                         score="Skor_Buku", score_label="Skor segmen", rank=True)
+                cl, top, has_pref, relaxed = newuser_recs(nu["age"], nu["country"], nu["authors"], nu["pubs"],
+                                                          nu["decs"], nu["favs"], nu["n"])
             except Exception as exc:
                 st.error(f"Gagal memuat model clustering: {exc}")
                 st.caption("Periksa versi kmodes dan scikit-learn, serta urutan fitur (Age, Country_Cluster).")
+            else:
+                cu = D["cu"]
+                prof = cu[pd.to_numeric(cu["Cluster"], errors="coerce") == cl] if cu is not None else pd.DataFrame()
+                n_pref = len(nu["authors"]) + len(nu["pubs"]) + len(nu["favs"])
+                kpis([("🧭", "g1", "Segmen kamu", f"Cluster {cl}", f"usia {nu['age']} · {nu['country']}"),
+                      ("👥", "g4", "Anggota segmen", short(len(prof)), f"usia rata-rata {pd.to_numeric(prof['Age'], errors='coerce').mean():.0f} th" if len(prof) else ""),
+                      ("🎯", "g2", "Preferensi diisi", num(n_pref), "penulis · penerbit · buku"),
+                      ("🗓️", "g3", "Dekade", ", ".join(nu["decs"]) if nu["decs"] else "Semua", "filter tahun terbit")])
+                if relaxed:
+                    st.warning("Tidak ada buku pada dekade yang dipilih, jadi filter dekade diabaikan.")
+                sapa = f"Untuk {html.escape(nu['nama'])}" if nu["nama"] else "Rekomendasi untukmu"
+                sub = ("skor = 0,7 × kecocokan preferensi + 0,3 × popularitas segmen" if has_pref
+                       else "tanpa preferensi: diurutkan dari popularitas segmen (Bayesian Weighted Rating)")
+                heading(sapa, f"Pengguna baru · Cluster {cl}", sub)
+                grid(top, "nu", score="Skor akhir", score_label="Skor", rank=True, why=True)
 
 # =========================================================
 # KATALOG
 # =========================================================
 elif page == "Katalog":
-    page_title("Katalog buku", "Cari, saring, dan jelajahi buku. Klik Detail untuk melihat buku yang serupa.")
-    base = CAT[CAT["in_model"]].copy()
+    page_title("Katalog buku", "Cari berdasarkan judul, penulis, penerbit, atau ISBN, lalu saring dengan dekade dan bintang.")
+    base = CAT.copy()
+    base["Dekade"] = base["Year-Of-Publication"].map(decade_of)
+    ss.setdefault("cat_q", "")
     with st.container(border=True):
-        a, b, c, d = st.columns([2.2, 1.4, 1.1, 1.1])
-        q = a.text_input("Cari", placeholder="🔎  Judul, penulis, atau penerbit...", label_visibility="collapsed")
-        authors = ["Semua penulis"] + base["Book-Author"].value_counts().index.tolist()
-        au = b.selectbox("Penulis", authors, label_visibility="collapsed")
-        min_s = c.select_slider("Bintang minimal", [0, 3, 3.5, 4, 4.5], value=0, format_func=lambda v: "Semua ★" if v == 0 else f"≥ {v} ★",
-                                label_visibility="collapsed")
-        sort = d.selectbox("Urutkan", ["Terpopuler", "Bintang tertinggi", "Terbaru", "Judul A-Z"], label_visibility="collapsed")
-        y = base["Year-Of-Publication"]
-        yr = st.slider("Tahun terbit", 1950, 2005, (1950, 2005))
-    m = (y.isna() | y.between(*yr) | (y <= 0)) if yr == (1950, 2005) else y.between(*yr)
-    if q.strip():
-        k = q.strip()
-        m &= (base["Book-Title"].str.contains(k, case=False, regex=False, na=False) |
-              base["Book-Author"].str.contains(k, case=False, regex=False, na=False) |
-              base["Publisher"].astype(str).str.contains(k, case=False, regex=False, na=False))
+        a, b, c = st.columns([2.4, 1.3, 1.3])
+        q = a.text_input("Cari", placeholder="🔎  Judul, penulis, penerbit, atau ISBN...", key="cat_q", label_visibility="collapsed")
+        au = b.selectbox("Penulis", ["Semua penulis"] + base["Book-Author"].value_counts().index.tolist(), label_visibility="collapsed", key="w_selectbox_penulis")
+        pub = c.selectbox("Penerbit", ["Semua penerbit"] + base["Publisher"].astype(str).value_counts().index.tolist(),
+                          label_visibility="collapsed", key="w_selectbox_penerbit")
+        a, b, c = st.columns([2.4, 1.3, 1.3])
+        decs = a.multiselect("Dekade", sorted(base["Dekade"].unique()), placeholder="Semua dekade", label_visibility="collapsed", key="w_multiselect_dekade")
+        min_s = b.select_slider("Bintang minimal", [0, 3, 3.5, 4, 4.5], value=0,
+                                format_func=lambda v: "Semua ★" if v == 0 else f"≥ {v} ★", label_visibility="collapsed", key="w_select_slider_bintang_minimal")
+        sort = c.selectbox("Urutkan", ["Terpopuler", "Bintang tertinggi", "Terbaru", "Judul A-Z"], label_visibility="collapsed", key="w_selectbox_urutkan")
+    res = search_books(base, q) if q.strip() else base
     if au != "Semua penulis":
-        m &= base["Book-Author"] == au
+        res = res[res["Book-Author"] == au]
+    if pub != "Semua penerbit":
+        res = res[res["Publisher"].astype(str) == pub]
+    if decs:
+        res = res[res["Dekade"].isin(decs)]
     if min_s:
-        m &= base["avg"] / 2 >= min_s
-    res = base[m]
+        res = res[res["avg"] / 2 >= min_s]
     res = {"Terpopuler": res.sort_values("n", ascending=False),
            "Bintang tertinggi": res.sort_values("bayes", ascending=False),
            "Terbaru": res.sort_values("Year-Of-Publication", ascending=False),
@@ -778,9 +1061,9 @@ elif page == "Katalog":
     h1, h2 = st.columns([3, 1])
     h1.markdown(f'<div class="sec" style="margin-top:.8rem"><span><b style="display:inline;font-size:1.3rem">{num(len(res))}</b> buku ditemukan</span></div>',
                 unsafe_allow_html=True)
-    pg = h2.number_input("Halaman", 1, pages, 1, help=f"dari {pages} halaman") if pages > 1 else 1
+    pg = h2.number_input("Halaman", 1, pages, 1, help=f"dari {pages} halaman", key=f"pg_{len(res)}_{sort}") if pages > 1 else 1
     if res.empty:
-        st.warning("Tidak ada buku yang cocok. Coba longgarkan filter.")
+        st.warning("Tidak ada buku yang cocok. Coba kata kunci lain atau longgarkan filter.")
     else:
         grid(res.iloc[(pg - 1) * per: pg * per], f"cat{pg}", ncols=6)
 
@@ -788,95 +1071,160 @@ elif page == "Katalog":
 # EKSPLORASI DATA
 # =========================================================
 elif page == "Eksplorasi Data":
-    page_title("Eksplorasi data", "Hanya analisis yang memengaruhi kualitas rekomendasi. Dihitung dari data mentah Book-Crossing.")
-    if not E:
-        st.warning("Tambahkan eda_summary.json (jalankan prep_eda.py) untuk menampilkan halaman ini.")
-        st.stop()
-    exp_share = E["n_explicit"] / E["n_ratings"]
-    kpis([("🗂️", "g1", "Total interaksi", short(E["n_ratings"]), f"{num(E['n_users'])} pengguna · {short(E['n_books'])} buku"),
-          ("⭐", "g2", "Rating eksplisit", short(E["n_explicit"]), f"{exp_share * 100:.0f}% dari interaksi"),
-          ("📈", "g3", "Rata-rata rating", f"{num(E['mean_rating'], 2)}/10", f"≈ {num(E['mean_rating'] / 2, 1)} ★"),
-          ("🕳️", "g4", "Matriks kosong", f"{E['sparsity'] * 100:.3f}%", "pasangan pembaca-buku tanpa rating")])
+    page_title("Eksplorasi data", "Buku, pembaca, dan seberapa kuat bukti yang dipakai sistem rekomendasi.")
 
-    t1, t2, t3, t4 = st.tabs(["⭐  Rating", "📉  Aktivitas & sparsity", "👥  Pembaca", "📚  Katalog & kualitas data"])
+    scopes = (["🌐  Seluruh dataset Book-Crossing"] if RAW else []) + ["🧠  Data yang dipakai model"]
+    scope = st.radio("Cakupan", scopes, horizontal=True, key="eda_scope", label_visibility="collapsed")
+    if scope.startswith("🌐"):
+        E, BM = RAW, D["eda_books"]
+        st.caption("Ringkasan seluruh data mentah (1,15 jt interaksi), dihitung sekali dengan prep_eda.py. "
+                   "Tabel buku memuat ISBN dengan ≥ 10 rating eksplisit.")
+    else:
+        E, BM = model_eda()
+        if not RAW:
+            st.info("Tambahkan eda_summary.json dan eda_books.csv (hasil prep_eda.py) untuk melihat seluruh dataset mentah.")
+        st.caption(f"Hanya data latih model: pembaca dengan ≥ {META.get('min_user_ratings', 20)} rating dan buku dengan "
+                   f"≥ {META.get('min_book_ratings', 10)} rating. Rating 0 sudah dibuang, jadi semua interaksi di sini eksplisit.")
+    raw = scope.startswith("🌐")
+
+    kpis([("📚", "g1", "ISBN dalam katalog", short(E["n_books"]), f"{short(E['n_books_explicit'])} punya rating eksplisit"),
+          ("👥", "g4", "Profil pembaca", short(E["n_users"]), f"{short(E['n_users_explicit'])} memberi rating eksplisit"),
+          ("🗂️", "g3", "Interaksi valid", short(E["n_ratings"]), f"{E['n_explicit'] / max(E['n_ratings'], 1) * 100:.0f}% eksplisit"),
+          ("⭐", "g2", "Rata-rata rating", f"{num(E['mean_rating'], 2)}/10", f"≈ {num(E['mean_rating'] / 2, 1)} bintang")])
+
+    t1, t2, t3, t4 = st.tabs(["📈  Ringkasan & aktivitas", "🔎  Jelajahi buku", "👥  Profil pembaca", "🧪  Kualitas & cakupan"])
+
+    # ---------- Ringkasan & aktivitas ----------
     with t1:
+        rd = E["rating_dist"]
         a, b = st.columns([1, 1.5])
         with a:
-            chart_card("Interaksi implisit vs eksplisit",
-                       donut(["Implisit (rating 0)", "Eksplisit (1-10)"], [E["n_implicit"], E["n_explicit"]], [SAGE, FOREST],
-                             f"{exp_share * 100:.0f}%<br><span style='font-size:11px'>eksplisit</span>"),
-                       "rating 0 = interaksi tanpa nilai",
-                       f"<b>{E['n_implicit'] / E['n_ratings'] * 100:.0f}%</b> interaksi tidak memberi nilai, jadi dibuang dari pelatihan SVD "
-                       "yang memprediksi rating 1-10.")
+            if E["n_implicit"]:
+                exp_share = E["n_explicit"] / E["n_ratings"]
+                chart_card("Komposisi umpan balik",
+                           donut(["Implisit (rating 0)", "Eksplisit (1-10)"], [E["n_implicit"], E["n_explicit"]], [SAGE, FOREST],
+                                 f"{exp_share * 100:.0f}%<br><span style='font-size:11px'>eksplisit</span>"),
+                           "rating 0 = interaksi tanpa nilai",
+                           f"<b>{(1 - exp_share) * 100:.0f}%</b> interaksi bernilai 0. Nilai 0 <b>bukan skor buruk</b>, jadi tidak "
+                           "dihitung ke rata-rata dan dibuang dari pelatihan SVD.")
+            else:
+                s5 = {str(i): 0 for i in range(1, 6)}
+                for k, v in rd.items():
+                    s5[str(int(np.ceil(int(k) / 2)))] += v
+                tot = max(sum(s5.values()), 1)
+                rows = "".join(
+                    f'<div style="display:flex;align-items:center;gap:.7rem;margin:.45rem 0"><span style="width:62px;color:#e3a83b">{"★" * int(k)}</span>'
+                    f'<div style="flex:1;height:12px;background:#efe8d8;border-radius:8px;overflow:hidden"><div style="width:{s5[k] / tot * 100:.1f}%;'
+                    f'height:100%;background:linear-gradient(90deg,#1f6b4f,#e3a83b);border-radius:8px"></div></div>'
+                    f'<span style="width:100px;text-align:right;font-size:.8rem;color:#6f7d74">{s5[k] / tot * 100:.1f}%</span></div>'
+                    for k in ["5", "4", "3", "2", "1"])
+                with st.container(border=True):
+                    st.markdown('<div class="ct">Rating dalam 5 bintang</div><div class="cs">semua interaksi data model eksplisit</div>'
+                                + rows + '<div class="ins">💡 9-10 = 5★, 7-8 = 4★, 5-6 = 3★, 3-4 = 2★, 1-2 = 1★.</div>',
+                                unsafe_allow_html=True)
         with b:
-            rd = E["rating_dist"]
-            ks = list(rd.keys())
             mx = max(rd, key=rd.get)
-            chart_card("Distribusi rating eksplisit", bar(ks, list(rd.values()), highlight=mx, h=300, fmt=short),
+            hi = sum(v for k, v in rd.items() if int(k) >= 7) / max(sum(rd.values()), 1) * 100
+            chart_card("Sebaran skor eksplisit", bar(list(rd), list(rd.values()), highlight=mx, h=300, fmt=short),
                        "jumlah rating per nilai 1-10",
-                       f"Rating <b>{mx}</b> paling sering. {sum(v for k, v in rd.items() if int(k) >= 7) / sum(rd.values()) * 100:.0f}% rating bernilai ≥ 7: "
-                       "pembaca cenderung hanya menilai buku yang mereka suka. Ini disebut <b>positivity bias</b>.")
-        s5 = {str(i): 0 for i in range(1, 6)}
-        for k, v in rd.items():
-            s5[str(int(np.ceil(int(k) / 2)))] += v
-        with st.container(border=True):
-            st.markdown('<div class="ct">Dikonversi ke 5 bintang (seperti di kartu buku)</div>', unsafe_allow_html=True)
-            tot = sum(s5.values())
-            rows = ""
-            for k in ["5", "4", "3", "2", "1"]:
-                p = s5[k] / tot * 100
-                rows += (f'<div style="display:flex;align-items:center;gap:.7rem;margin:.25rem 0"><span style="width:62px;color:#e3a83b">{"★" * int(k)}</span>'
-                         f'<div style="flex:1;height:12px;background:#efe8d8;border-radius:8px;overflow:hidden">'
-                         f'<div style="width:{p:.1f}%;height:100%;background:linear-gradient(90deg,#1f6b4f,#e3a83b);border-radius:8px"></div></div>'
-                         f'<span style="width:110px;text-align:right;font-size:.8rem;color:#6f7d74">{p:.1f}% · {short(s5[k])}</span></div>')
-            st.markdown(rows + '<div class="ins">💡 Rating 9-10 = 5★, 7-8 = 4★, 5-6 = 3★, 3-4 = 2★, 1-2 = 1★.</div>', unsafe_allow_html=True)
-
-    with t2:
+                       f"Skor <b>{mx}</b> paling sering muncul dan {hi:.0f}% rating bernilai ≥ 7. Pembaca cenderung hanya menilai "
+                       "buku yang mereka sukai (<b>positivity bias</b>).")
         a, b = st.columns(2)
         with a:
-            ub = E["user_bins"]
-            chart_card("Jumlah rating per pembaca", bar(list(ub), list(ub.values()), highlight="1", fmt=short),
-                       "pembaca dengan rating eksplisit",
-                       f"Median hanya <b>{E['median_user']:.0f}</b> rating per pembaca. Hanya <b>{num(E['users_ge5'])}</b> pembaca "
-                       "punya ≥ 5 rating. Inilah alasan model dilatih pada pembaca dengan ≥ 20 rating.")
+            act = E["activity"]
+            chart_card("Interaksi per profil pembaca", bar(list(act), list(act.values()), highlight=max(act, key=act.get), fmt=short),
+                       "termasuk rating 0 · kelompok 0 = tidak ada interaksi",
+                       f"<b>{num(act.get('0', 0))}</b> profil ({act.get('0', 0) / max(E['n_users'], 1) * 100:.0f}%) tidak punya interaksi, "
+                       f"dan median rating eksplisit per pembaca hanya <b>{E['median_user']:.0f}</b>. Riwayat pendek menyulitkan CF.")
         with b:
+            lz = np.array(E["lorenz"]) if E["lorenz"] else np.zeros((0, 2))
+            fig = go.Figure()
+            fig.add_scatter(x=[0, 100], y=[0, 100], mode="lines", name="Merata sempurna", line=dict(color=SAGE, dash="dash", width=2))
+            fig.add_scatter(x=lz[:, 0], y=lz[:, 1], mode="lines", name="Aktivitas sebenarnya", fill="tozeroy",
+                            fillcolor="rgba(227,168,59,.14)", line=dict(color=FOREST, width=3),
+                            hovertemplate="%{x:.1f}% profil teraktif<br>menyumbang <b>%{y:.1f}%</b> interaksi<extra></extra>")
+            fig = style(fig, 320, legend=True)
+            fig.update_xaxes(ticksuffix="%", title="profil, dari yang paling aktif")
+            fig.update_yaxes(ticksuffix="%", title="kumulatif interaksi")
+            chart_card("Konsentrasi aktivitas", fig, "kurva Lorenz",
+                       f"Hanya <b>1%</b> profil teraktif menyumbang <b>{E['top1_share']:.0f}%</b> interaksi. Model mudah didominasi "
+                       "selera segelintir pembaca berat.")
+        a, b = st.columns([1, 1.3] if raw else [1, 1])
+        with a:
             bb = E["book_bins"]
-            chart_card("Jumlah rating per buku", bar(list(bb), list(bb.values()), highlight="1", fmt=short, color="#c9b48a"),
+            chart_card("Rating eksplisit per buku", bar(list(bb), list(bb.values()), highlight=max(bb, key=bb.get), fmt=short, color="#c9b48a"),
                        "long tail katalog",
-                       f"<b>{E['books_once'] * 100:.0f}%</b> buku hanya dinilai sekali. CF sulit memprediksi buku seperti ini, "
-                       "sehingga CBF diperlukan sebagai pelengkap.")
-        n_mod = META.get("n_model_ratings", len(RATINGS))
-        fig = go.Figure(go.Funnel(
-            y=["Semua interaksi", "Rating eksplisit", "Data model (user ≥ 20, buku ≥ 10)"],
-            x=[E["n_ratings"], E["n_explicit"], n_mod], textinfo="value+percent initial",
-            marker=dict(color=[SAGE, PINE, GOLD]), connector=dict(fillcolor="#efe8d8")))
-        fig = style(fig, 300)
-        fig.update_yaxes(tickfont=dict(color=INK, size=12))
-        chart_card("Dari data mentah ke data latih model", fig, "penyaringan agar CF punya cukup sinyal",
-                   f"Setelah penyaringan tersisa <b>{num(META.get('n_model_users', 0))}</b> pembaca dan "
-                   f"<b>{num(META.get('n_model_books', len(BOOKS)))}</b> buku. Matriks jauh lebih padat sehingga pola rating bisa dipelajari.")
+                       f"<b>{E['books_once'] * 100:.0f}%</b> buku hanya dinilai sekali; hanya {num(E['books_ge10'])} buku punya ≥ 10 rating. "
+                       "Untuk buku seperti ini, CBF menjadi pelengkap CF.")
+        if raw:
+            with b:
+                fig = go.Figure(go.Funnel(y=["Semua interaksi", "Rating eksplisit", "Data model"],
+                                          x=[E["n_ratings"], E["n_explicit"], META.get("n_model_ratings", len(RATINGS))],
+                                          textinfo="value+percent initial", marker=dict(color=[SAGE, PINE, GOLD]),
+                                          connector=dict(fillcolor="#efe8d8")))
+                fig = style(fig, 320)
+                fig.update_yaxes(tickfont=dict(color=INK, size=12))
+                chart_card("Dari data mentah ke data latih", fig, f"filter: pembaca ≥ {META.get('min_user_ratings', 20)} rating, buku ≥ {META.get('min_book_ratings', 10)} rating",
+                           f"Tersisa <b>{num(META.get('n_model_users', 0))}</b> pembaca dan <b>{num(META.get('n_model_books', len(BOOKS)))}</b> buku "
+                           "dengan sinyal yang cukup untuk dipelajari.")
+        else:
+            with b:
+                with st.container(border=True):
+                    st.markdown(f'<div class="ct">Kepadatan matriks</div><div class="cs">pasangan pembaca–buku yang punya rating</div>'
+                                f'<div class="kpi" style="box-shadow:none;border:0;padding:.4rem 0"><div class="i g2">🧩</div><div>'
+                                f'<div class="v">{E["density"]:.3f}%</div><div class="s">di data model, dibandingkan '
+                                f'{RAW["density"]:.4f}% di data mentah</div></div></div>' if RAW else
+                                f'<div class="ct">Kepadatan matriks</div><div class="v">{E["density"]:.3f}%</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="ins">💡 Penyaringan membuat matriks jauh lebih padat sehingga SVD bisa mempelajari pola, '
+                                'tetapi buku dan pembaca di luar filter hanya bisa dilayani CBF atau cluster.</div>', unsafe_allow_html=True)
 
-    with t3:
-        a, b = st.columns(2)
-        with a:
-            ah = E["age_hist"]
-            x = [int(k) for k in ah]
-            fig = go.Figure(go.Bar(x=[k + 2.5 for k in x], y=list(ah.values()), width=4.4,
-                                   marker=dict(color=[GOLD if 25 <= k < 40 else SAGE for k in x], cornerradius=5),
-                                   hovertemplate="usia %{x}<br><b>%{y:,}</b><extra></extra>"))
-            fig.add_vline(x=E["age_median"], line_dash="dot", line_color=BURGUNDY,
-                          annotation_text=f"median {E['age_median']:.0f}", annotation_font_color=BURGUNDY)
-            chart_card("Sebaran usia pembaca", style(fig), "rentang 5-100 tahun",
-                       f"Pembaca terbanyak berusia 25-40. <b>{E['age_missing'] * 100:.0f}%</b> pengguna tidak mengisi usia, "
-                       "sehingga K-Prototypes perlu menangani data kosong.")
-        with b:
-            cc = E["countries"]
-            tot = sum(cc.values())
-            chart_card("10 negara asal pembaca", hbar(list(cc), list(cc.values()), fmt=short), "",
-                       f"USA mendominasi ({list(cc.values())[0] / E['n_users'] * 100:.0f}% pengguna). Negara kecil digabung "
-                       "menjadi 'Other' saat clustering.")
-
-    with t4:
+    # ---------- Jelajahi buku ----------
+    with t2:
+        with st.container(border=True):
+            f1, f2, f3 = st.columns([2.2, 1, 1])
+            query = f1.text_input("Cari judul, penulis, atau penerbit", key="eda_search", placeholder="🔎  mis. Grisham, Penguin...")
+            mins = [10, 30, 50, 100] if raw else [0, 10, 30, 50, 100]
+            threshold = f2.selectbox("Minimal rating eksplisit", mins, index=1 if raw else 2, key="eda_min")
+            top_n = f3.selectbox("Jumlah buku di grafik", [5, 10, 15], index=1, key="eda_top")
+            order = st.radio("Urutkan berdasarkan", ["Skor berbobot", "Rating eksplisit", "Interaksi", "Rata-rata"],
+                             horizontal=True, key="eda_order")
+        view = BM[BM["Rating eksplisit"] >= threshold]
+        if query.strip():
+            k = query.strip()
+            view = view[view["Book-Title"].astype(str).str.contains(k, case=False, regex=False, na=False) |
+                        view["Book-Author"].astype(str).str.contains(k, case=False, regex=False, na=False) |
+                        view["Publisher"].astype(str).str.contains(k, case=False, regex=False, na=False)]
+        view = view.sort_values([order, "Rating eksplisit", "ISBN"], ascending=[False, False, True])
+        note(f"<b>{num(len(view))}</b> ISBN memenuhi filter. <b>Skor berbobot</b> = (n × rata-rata buku + {E['weight_m']} × rata-rata katalog "
+             f"{num(E['catalog_mean'], 2)}) ÷ (n + {E['weight_m']}). Buku dengan sedikit rating ditarik ke rata-rata, sehingga skor "
+             "tinggi dari 2-3 rating tidak mendominasi.")
+        if view.empty:
+            st.info("Tidak ada buku yang memenuhi filter. Turunkan batas rating atau ubah kata pencarian.")
+        else:
+            top = view.dropna(subset=[order]).head(top_n)
+            lbl = (top["Book-Title"].astype(str).str.slice(0, 38) + " · " + top["ISBN"].str[-4:]).tolist()
+            vals = top[order].round(2).tolist()
+            fmt = (lambda v: f"{v:,.0f}") if order in ("Interaksi", "Rating eksplisit") else (lambda v: f"{v:.2f}")
+            fig = hbar(lbl, vals, h=max(320, 34 * len(top)), fmt=fmt)
+            if order in ("Skor berbobot", "Rata-rata"):
+                fig.update_xaxes(range=[0, 11.5])
+            a, b = st.columns([1.25, 1])
+            with a:
+                chart_card(f"Peringkat berdasarkan {order.lower()}", fig, "satu baris = satu ISBN (edisi) · 4 digit terakhir ISBN di label")
+            with b:
+                shown = view.head(top_n)
+                with st.container(border=True):
+                    st.markdown('<div class="ct">Sampul teratas</div><div class="cs">klik judul di Katalog untuk detail</div>', unsafe_allow_html=True)
+                    shelf(shown, min(top_n, 8))
+            cols = ["ISBN", "Book-Title", "Book-Author", "Publisher", "Year-Of-Publication", "Interaksi", "Rating eksplisit", "Rata-rata", "Skor berbobot"]
+            st.dataframe(view[cols].head(500), hide_index=True, use_container_width=True, height=360,
+                         column_config={"Book-Title": st.column_config.TextColumn("Judul", width="large"),
+                                        "Book-Author": "Penulis", "Year-Of-Publication": st.column_config.NumberColumn("Tahun", format="%d"),
+                                        "Rata-rata": st.column_config.ProgressColumn("Rata-rata", min_value=0, max_value=10, format="%.2f"),
+                                        "Skor berbobot": st.column_config.ProgressColumn("Skor berbobot", min_value=0, max_value=10, format="%.2f")})
+            st.download_button("⬇️  Unduh hasil filter (CSV)", view[cols].to_csv(index=False).encode("utf-8-sig"),
+                               "eksplorasi_buku.csv", "text/csv", key="eda_download")
+            st.caption("Tabel menampilkan maksimal 500 baris; unduhan berisi seluruh hasil filter.")
         a, b = st.columns(2)
         with a:
             au = E["authors"]
@@ -886,25 +1234,70 @@ elif page == "Eksplorasi Data":
             pub = E["publishers"]
             chart_card("Penerbit dengan pembaca terbanyak", hbar([r["publisher"] for r in pub], [r["readers"] for r in pub], fmt=short),
                        "penerbit ikut menjadi fitur teks TF-IDF")
-        a, b = st.columns([1.4, 1])
+        dc = E["decades"]
+        if dc:
+            top_d = max(dc, key=dc.get)
+            chart_card("Tahun terbit per dekade", bar([f"{k}-an" for k in dc], list(dc.values()), highlight=f"{top_d}-an", h=280, fmt=short),
+                       f"rentang 1950-2004 · {num(E['year_invalid'])} ISBN dengan tahun kosong/di luar rentang tidak diplot",
+                       f"Katalog didominasi terbitan <b>{top_d}-an</b>. Tahun terbit bukan waktu membaca: data dikumpulkan tahun 2004.")
+
+    # ---------- Profil pembaca ----------
+    with t3:
+        a, b = st.columns(2)
         with a:
-            dc = E["decades"]
-            chart_card("Tahun terbit per dekade", bar([f"{k}-an" for k in dc], list(dc.values()), highlight="1990-an", fmt=short), "",
-                       "Katalog didominasi buku terbitan 1990-an. Data Book-Crossing dikumpulkan tahun 2004.")
+            ah = E["age_hist"]
+            if sum(ah.values()):
+                x = [int(k) for k in ah]
+                fig = go.Figure(go.Bar(x=[k + 2.5 for k in x], y=list(ah.values()), width=4.4,
+                                       marker=dict(color=[GOLD if 25 <= k < 40 else SAGE for k in x], cornerradius=5),
+                                       hovertemplate="usia %{x}<br><b>%{y:,}</b><extra></extra>"))
+                fig.add_vline(x=E["age_median"], line_dash="dot", line_color=BURGUNDY,
+                              annotation_text=f"median {E['age_median']:.0f}", annotation_font_color=BURGUNDY)
+                chart_card("Distribusi usia", style(fig), f"{num(E['age_valid'])} profil dengan usia 5-100 tahun",
+                           f"Usia kosong pada <b>{E['age_missing'] * 100:.0f}%</b> profil dan {num(E['age_out'])} usia di luar batas. "
+                           "Profil tetap dihitung; hanya usianya yang tidak diplot. K-Prototypes harus menangani usia kosong.")
+            else:
+                st.info("Usia tidak tersedia pada cakupan ini.")
+        with b:
+            cc = E["countries"]
+            chart_card("Negara asal pembaca", hbar(list(cc), list(cc.values()), fmt=short),
+                       "dari kolom Country atau bagian terakhir Location · alias seperti 'us'/'usa' disatukan",
+                       f"USA mendominasi ({list(cc.values())[0] / max(E['n_users'], 1) * 100:.0f}% profil). {num(E['country_unknown'])} profil "
+                       "tanpa negara jelas. Negara kecil digabung menjadi 'Other' saat clustering.")
+
+    # ---------- Kualitas & cakupan ----------
+    with t4:
+        a, b = st.columns([1, 1])
+        with a:
+            with st.container(border=True):
+                st.markdown('<div class="ct">Cakupan data</div><div class="cs">baris 1 terhadap interaksi valid · baris 2-3 terhadap ISBN katalog</div>',
+                            unsafe_allow_html=True)
+                out = ""
+                for (lbl, p), col in zip(E["coverage"].items(), [PINE, GOLD, BURGUNDY]):
+                    out += (f'<div style="margin:.75rem 0"><div style="display:flex;justify-content:space-between;font-size:.85rem">'
+                            f'<span>{lbl}</span><b style="color:{FOREST}">{p:.1f}%</b></div><div style="height:10px;background:#efe8d8;'
+                            f'border-radius:6px;margin-top:.3rem"><div style="width:{max(p, 1.5):.1f}%;height:100%;background:{col};border-radius:6px"></div></div></div>')
+                st.markdown(out + f'<div class="ins">💡 Kepadatan matriks eksplisit: <b>{E["density"]:.4f}%</b> pasangan pembaca–buku. '
+                                  'Interaksi tanpa metadata buku tidak bisa direkomendasikan karena tidak punya teks untuk TF-IDF.</div>',
+                            unsafe_allow_html=True)
         with b:
             with st.container(border=True):
-                st.markdown('<div class="ct">Kualitas data</div><div class="cs">hal yang ditangani saat preprocessing</div>', unsafe_allow_html=True)
-                q = [("ISBN rating ada di katalog", E["isbn_match"] * 100, f"{E['isbn_match'] * 100:.1f}%", PINE),
-                     ("Usia pengguna kosong", E["age_missing"] * 100, f"{E['age_missing'] * 100:.1f}%", BURGUNDY),
-                     ("Buku dengan ≥ 10 rating", E["books_ge10"] / E["n_books_explicit"] * 100, f"{num(E['books_ge10'])} buku", GOLD),
-                     ("Tahun terbit tidak valid", E["year_invalid"] / E["n_books"] * 100, f"{num(E['year_invalid'])} buku", SAGE)]
+                st.markdown('<div class="ct">Audit data</div><div class="cs">hal yang ditangani saat preprocessing</div>', unsafe_allow_html=True)
                 out = ""
-                for lbl, p, txt, col in q:
-                    out += (f'<div style="margin:.55rem 0"><div style="display:flex;justify-content:space-between;font-size:.82rem">'
-                            f'<span>{lbl}</span><b style="color:{FOREST}">{txt}</b></div><div style="height:8px;background:#efe8d8;border-radius:6px;margin-top:.25rem">'
-                            f'<div style="width:{max(p, 1.5):.1f}%;height:100%;background:{col};border-radius:6px"></div></div></div>')
-                st.markdown(out + '<div class="ins">💡 Rating dengan ISBN di luar katalog tidak bisa direkomendasikan karena tidak punya metadata untuk TF-IDF.</div>',
-                            unsafe_allow_html=True)
+                for lbl, v in E["audit"].items():
+                    ok = v == 0
+                    out += (f'<div class="row" style="justify-content:space-between"><span style="font-size:.85rem">'
+                            f'{"✅" if ok else "⚠️"} {lbl}</span><span class="tag" style="{"background:#e3efe4;color:#1f6b4f" if ok else ""}">'
+                            f'{num(v)}</span></div>')
+                st.markdown(out, unsafe_allow_html=True)
+        heading("Implikasi untuk sistem rekomendasi", "Kesimpulan")
+        imp = [("#1f6b4f", "Pisahkan sinyal", "Rating 0 adalah interaksi implisit, bukan skor buruk. SVD hanya dilatih pada rating 1-10."),
+               ("#e3a83b", "Tampilkan bukti", "Bintang selalu disertai jumlah rating. Skor tinggi dari sedikit rating perlu dibaca hati-hati."),
+               ("#8c2f39", "Siapkan cold-start", "Banyak profil tanpa riwayat: pengguna baru dilayani form preferensi (CBF) dan segmen K-Prototypes."),
+               ("#0f3d2e", "Seimbangkan filter", "Filter pembaca dan buku memadatkan matriks, tetapi mengurangi cakupan. CBF menutup celah itu.")]
+        for c, (col, t, d) in zip(st.columns(4), imp):
+            c.markdown(f'<div class="step" style="--c:{col}"><b>{t}</b><p>{d}</p></div>', unsafe_allow_html=True)
+        st.caption("Data tidak berisi waktu interaksi, pembelian, atau pendapatan, sehingga halaman ini tidak menyimpulkan tren waktu.")
 
 # =========================================================
 # EVALUASI & SEGMENTASI
@@ -932,7 +1325,7 @@ elif page == "Evaluasi & Segmentasi":
                        f"<b>{best['Model']}</b> lebih akurat. Rata-rata prediksinya meleset sekitar {best['MAE']:.2f} poin dari rating asli.")
         with b:
             opts = [c for c in ["NDCG@10", "HitRate@10", "Recall@10", "Precision@10"] if c in al.columns]
-            m = st.radio("Metrik", opts, horizontal=True, label_visibility="collapsed")
+            m = st.radio("Metrik", opts, horizontal=True, label_visibility="collapsed", key="w_radio_metrik")
             bm = al.loc[al[m].idxmax()]
             fig = go.Figure(go.Scatter(x=al["alpha"], y=al[m], mode="lines+markers", line=dict(color=PINE, width=3, shape="spline"),
                                        fill="tozeroy", fillcolor="rgba(31,107,79,.08)", marker=dict(size=8, color=PINE),
